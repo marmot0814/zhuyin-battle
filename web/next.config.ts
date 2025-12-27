@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
     unoptimized: true,
   },
   env: {
-    NEXT_PUBLIC_API_URL: 'https://neighbors-kate-surgeon-practices.trycloudflare.com',
+    NEXT_PUBLIC_API_URL: 'https://zhuyin-battle.marmot0814.com',
     NEXT_PUBLIC_GOOGLE_CLIENT_ID: '666977153196-esbi7r0o0flbv82mrjn87m0m29so5chl.apps.googleusercontent.com',
   },
   // 暫時跳過動態路由頁面

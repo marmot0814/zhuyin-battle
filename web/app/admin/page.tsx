@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '../../lib/api';
+import RankIcon from '../components/RankIcons';
+import { getRankInfo } from '../../lib/utils';
 
 
 interface User {
@@ -14,6 +16,12 @@ interface User {
   rating: number;
   games_played: number;
   games_won: number;
+  ranked_games_played: number;
+  ranked_games_won: number;
+  casual_games_played: number;
+  casual_games_won: number;
+  custom_games_played: number;
+  custom_games_won: number;
   created_at: string;
   last_online: string;
   seconds_offline: number;
@@ -57,8 +65,9 @@ export default function AdminPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [ratingDist, setRatingDist] = useState<RatingDistribution[]>([]);
   const [recentUsers, setRecentUsers] = useState<User[]>([]);
+  const [activeBattles, setActiveBattles] = useState<any[]>([]);
   
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'friends'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'friends' | 'battles'>('overview');
 
   // 驗證密碼
   async function handleLogin(e: React.FormEvent) {
@@ -88,12 +97,13 @@ export default function AdminPage() {
         'x-admin-password': adminPassword || ''
       };
       
-      const [usersRes, friendsRes, statsRes, ratingRes, recentRes] = await Promise.all([
+      const [usersRes, friendsRes, statsRes, ratingRes, recentRes, battlesRes] = await Promise.all([
         api('/api/admin/users', { headers }),
         api('/api/admin/friends', { headers }),
         api('/api/admin/stats', { headers }),
         api('/api/admin/rating-distribution', { headers }),
-        api('/api/admin/recent-users', { headers })
+        api('/api/admin/recent-users', { headers }),
+        api('/api/matchmaking/active', { headers })
       ]);
       
       console.log('Users response status:', usersRes.status);
@@ -109,8 +119,31 @@ export default function AdminPage() {
       if (statsRes.ok) setStats(await statsRes.json());
       if (ratingRes.ok) setRatingDist(await ratingRes.json());
       if (recentRes.ok) setRecentUsers(await recentRes.json());
+      if (battlesRes.ok) setActiveBattles(await battlesRes.json());
     } catch (error) {
       console.error('Failed to load admin data:', error);
+    }
+  }
+
+  // 刪除對戰
+  async function deleteBattle(battleId: string) {
+    if (!confirm('確定要刪除這場對戰嗎？')) return;
+    
+    try {
+      // Use the password from state which is verified
+      const res = await api(`/api/admin/battles/${battleId}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-password': password }
+      });
+      
+      if (res.ok) {
+        setActiveBattles(prev => prev.filter(b => b.id !== battleId));
+      } else {
+        alert('刪除失敗');
+      }
+    } catch (error) {
+      console.error('Failed to delete battle:', error);
+      alert('刪除發生錯誤');
     }
   }
 
@@ -256,6 +289,16 @@ export default function AdminPage() {
           >
             🤝 好友關係 ({friends.length})
           </button>
+          <button
+            onClick={() => setActiveTab('battles')}
+            className={`px-6 py-3 font-medium transition-colors ${
+              activeTab === 'battles'
+                ? 'text-white border-b-2 border-red-500'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            ⚔️ 活躍對戰 ({activeBattles.length})
+          </button>
         </div>
 
         {/* Overview Tab */}
@@ -331,7 +374,15 @@ export default function AdminPage() {
                         <td className="py-3 px-4 text-slate-300">{user.id}</td>
                         <td className="py-3 px-4 text-white font-medium">{user.username}</td>
                         <td className="py-3 px-4 text-slate-300 text-sm">{user.email}</td>
-                        <td className="py-3 px-4 text-amber-400 font-bold">{user.rating}</td>
+                        <td className="py-3 px-4 text-amber-400 font-bold">
+                          <div className="flex items-center gap-2 group relative">
+                            <RankIcon rating={user.rating} size={24} />
+                            <span>{user.rating}</span>
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10 border border-slate-700">
+                              {getRankInfo(user.rating).nameZh}
+                            </div>
+                          </div>
+                        </td>
                         <td className="py-3 px-4 text-slate-300">{user.games_played}</td>
                         <td className="py-3 px-4 text-slate-400 text-sm">{formatDate(user.created_at)}</td>
                       </tr>
@@ -350,15 +401,13 @@ export default function AdminPage() {
               <table className="w-full">
                 <thead className="bg-slate-800/50">
                   <tr>
-                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">ID</th>
                     <th className="text-left py-4 px-4 text-slate-300 font-semibold">頭像</th>
                     <th className="text-left py-4 px-4 text-slate-300 font-semibold">用戶名</th>
                     <th className="text-left py-4 px-4 text-slate-300 font-semibold">Email</th>
-                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">個人簡介</th>
                     <th className="text-left py-4 px-4 text-slate-300 font-semibold">Rating</th>
-                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">場次</th>
-                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">勝場</th>
-                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">勝率</th>
+                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">積分對戰 (勝/敗/場/率)</th>
+                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">一般對戰 (勝/敗/場/率)</th>
+                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">好友對戰 (勝/敗/場/率)</th>
                     <th className="text-left py-4 px-4 text-slate-300 font-semibold">上線狀態</th>
                     <th className="text-left py-4 px-4 text-slate-300 font-semibold">註冊時間</th>
                   </tr>
@@ -371,7 +420,6 @@ export default function AdminPage() {
                         idx % 2 === 0 ? 'bg-slate-900/20' : ''
                       }`}
                     >
-                      <td className="py-3 px-4 text-slate-300 font-mono">{user.id}</td>
                       <td className="py-3 px-4">
                         <img
                           src={user.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.username}`}
@@ -381,22 +429,50 @@ export default function AdminPage() {
                       </td>
                       <td className="py-3 px-4 text-white font-medium">{user.username}</td>
                       <td className="py-3 px-4 text-slate-300 text-sm">{user.email}</td>
-                      <td className="py-3 px-4 text-slate-400 text-sm max-w-xs truncate">
-                        {user.bio || '-'}
-                      </td>
                       <td className="py-3 px-4 text-amber-400 font-bold">
-                        {user.games_played < 10 ? (
-                          <span className="text-amber-400 text-xs">定級中</span>
-                        ) : (
-                          user.rating
-                        )}
+                        <div className="flex items-center gap-2 group relative">
+                          <RankIcon rating={user.rating} size={32} />
+                          <span>{user.rating}</span>
+                          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10 border border-slate-700">
+                            {getRankInfo(user.rating).nameZh}
+                          </div>
+                        </div>
                       </td>
-                      <td className="py-3 px-4 text-slate-300">{user.games_played}</td>
-                      <td className="py-3 px-4 text-green-400">{user.games_won}</td>
                       <td className="py-3 px-4 text-slate-300">
-                        {user.games_played > 0
-                          ? `${Math.round((user.games_won / user.games_played) * 100)}%`
-                          : '0%'}
+                        <div className="flex flex-col text-xs">
+                          <span className="text-green-400">勝: {user.ranked_games_won || 0}</span>
+                          <span className="text-red-400">敗: {(user.ranked_games_played || 0) - (user.ranked_games_won || 0)}</span>
+                          <span>場: {user.ranked_games_played || 0}</span>
+                          <span className="text-slate-400">
+                            {user.ranked_games_played > 0
+                              ? `${Math.round((user.ranked_games_won / user.ranked_games_played) * 100)}%`
+                              : '0%'}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-slate-300">
+                        <div className="flex flex-col text-xs">
+                          <span className="text-green-400">勝: {user.casual_games_won || 0}</span>
+                          <span className="text-red-400">敗: {(user.casual_games_played || 0) - (user.casual_games_won || 0)}</span>
+                          <span>場: {user.casual_games_played || 0}</span>
+                          <span className="text-slate-400">
+                            {user.casual_games_played > 0
+                              ? `${Math.round((user.casual_games_won / user.casual_games_played) * 100)}%`
+                              : '0%'}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-slate-300">
+                        <div className="flex flex-col text-xs">
+                          <span className="text-green-400">勝: {user.custom_games_won || 0}</span>
+                          <span className="text-red-400">敗: {(user.custom_games_played || 0) - (user.custom_games_won || 0)}</span>
+                          <span>場: {user.custom_games_played || 0}</span>
+                          <span className="text-slate-400">
+                            {user.custom_games_played > 0
+                              ? `${Math.round((user.custom_games_won / user.custom_games_played) * 100)}%`
+                              : '0%'}
+                          </span>
+                        </div>
                       </td>
                       <td className="py-3 px-4">{formatOnlineStatus(user.seconds_offline)}</td>
                       <td className="py-3 px-4 text-slate-400 text-sm">{formatDate(user.created_at)}</td>
@@ -453,6 +529,68 @@ export default function AdminPage() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-slate-400 text-sm">{formatDate(friend.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Battles Tab */}
+        {activeTab === 'battles' && (
+          <div className="bg-[#1e293b] rounded-xl border border-slate-700 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-slate-800/50">
+                  <tr>
+                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">對戰 ID</th>
+                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">模式</th>
+                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">玩家 1</th>
+                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">Rating 1</th>
+                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">玩家 2</th>
+                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">Rating 2</th>
+                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">開始時間</th>
+                    <th className="text-left py-4 px-4 text-slate-300 font-semibold">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeBattles.map((battle, idx) => (
+                    <tr
+                      key={battle.id}
+                      className={`border-b border-slate-800 hover:bg-slate-800/30 ${
+                        idx % 2 === 0 ? 'bg-slate-900/20' : ''
+                      }`}
+                    >
+                      <td className="py-3 px-4 text-slate-300 font-mono">{battle.id}</td>
+                      <td className="py-3 px-4">
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          battle.mode === 'ranked' 
+                            ? 'bg-yellow-500/20 text-yellow-400' 
+                            : 'bg-blue-500/20 text-blue-400'
+                        }`}>
+                          {battle.mode === 'ranked' ? '積分' : '一般'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-white font-medium flex items-center gap-2">
+                        <img src={battle.player1_avatar} className="w-6 h-6 rounded-full" />
+                        {battle.player1_name}
+                      </td>
+                      <td className="py-3 px-4 text-amber-400 font-bold">{battle.player1_rating}</td>
+                      <td className="py-3 px-4 text-white font-medium flex items-center gap-2">
+                        <img src={battle.player2_avatar} className="w-6 h-6 rounded-full" />
+                        {battle.player2_name}
+                      </td>
+                      <td className="py-3 px-4 text-amber-400 font-bold">{battle.player2_rating}</td>
+                      <td className="py-3 px-4 text-slate-400 text-sm">{formatDate(battle.created_at)}</td>
+                      <td className="py-3 px-4">
+                        <button
+                          onClick={() => deleteBattle(battle.id)}
+                          className="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-xs font-medium transition-colors"
+                        >
+                          刪除
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

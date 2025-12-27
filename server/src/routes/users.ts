@@ -22,6 +22,59 @@ export function verifyToken(req: Request, res: Response, next: Function) {
   }
 }
 
+// Get rank distribution
+router.get('/rank-distribution', async (req: Request, res: Response) => {
+  try {
+    const result = await query(`
+      SELECT 
+        CASE 
+          WHEN rating < 800 THEN 'IRON'
+          WHEN rating < 1000 THEN 'BRONZE'
+          WHEN rating < 1200 THEN 'SILVER'
+          WHEN rating < 1500 THEN 'GOLD'
+          WHEN rating < 1800 THEN 'PLATINUM'
+          WHEN rating < 2200 THEN 'DIAMOND'
+          WHEN rating < 2500 THEN 'MASTER'
+          ELSE 'GRANDMASTER'
+        END as rank,
+        COUNT(*) as count
+      FROM users
+      WHERE games_played >= 10
+      GROUP BY rank
+    `);
+    
+    // Ensure all ranks are present
+    const ranks = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'DIAMOND', 'MASTER', 'GRANDMASTER'];
+    const distribution = ranks.map(r => {
+      const found = result.rows.find((row: any) => row.rank === r);
+      return {
+        rank: r,
+        count: found ? parseInt(found.count) : 0
+      };
+    });
+
+    res.json(distribution);
+  } catch (error) {
+    console.error('Error fetching rank distribution:', error);
+    res.status(500).json({ error: 'Failed to fetch rank distribution' });
+  }
+});
+
+// Get current user info
+router.get('/me', verifyToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const user = await UserModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(user);
+  } catch (error) {
+    console.error('Error fetching current user:', error);
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
 // Register user
 router.post('/register', async (req: Request, res: Response) => {
   try {
@@ -85,10 +138,34 @@ router.post('/login', async (req: Request, res: Response) => {
 router.get('/me', verifyToken, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
-    const user = await UserModel.findById(userId);
-    if (!user) {
+    const result = await query(
+      `SELECT id, username, email, avatar_url, bio, rating, 
+              ranked_games_played, ranked_games_won,
+              casual_games_played, casual_games_won,
+              custom_games_played, custom_games_won,
+              created_at
+       FROM users WHERE id = $1`,
+      [userId]
+    );
+    
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
+    
+    const user = result.rows[0];
+    // For 'me', maybe we show rating even if placement? 
+    // User said "backend api cannot return his rating, otherwise I can see it from frontend api".
+    // This implies even for 'me' if I inspect network.
+    // But usually you want to see your own progress.
+    // Let's assume for now we show it for 'me' because otherwise how do they know?
+    // Or maybe they see "Unranked" in UI.
+    // If the requirement is strict "cannot return his rating", then we hide it.
+    // But usually placement rating is hidden from *others*.
+    // Let's hide it if < 10 games, consistent with others.
+    if (user.ranked_games_played < 10) {
+      user.rating = null;
+    }
+
     res.json(user);
   } catch (error) {
     console.error('Get profile error:', error);

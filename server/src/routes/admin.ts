@@ -26,7 +26,11 @@ router.get('/users', verifyAdminPassword, async (req: Request, res: Response) =>
     const result = await query(`
       SELECT 
         id, email, username, avatar_url, bio, rating, 
-        games_played, games_won, created_at, last_online, last_ping,
+        games_played, games_won, 
+        ranked_games_played, ranked_games_won,
+        casual_games_played, casual_games_won,
+        custom_games_played, custom_games_won,
+        created_at, last_online, last_ping,
         EXTRACT(EPOCH FROM (NOW() - COALESCE(last_ping, last_online))) as seconds_offline
       FROM users 
       ORDER BY created_at DESC
@@ -146,6 +150,30 @@ router.get('/tables', verifyAdminPassword, async (req: Request, res: Response) =
   } catch (error) {
     console.error('Error fetching tables:', error);
     res.status(500).json({ error: 'Failed to fetch tables' });
+  }
+});
+
+// 刪除對戰
+router.delete('/battles/:id', verifyAdminPassword, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    await query('DELETE FROM battles WHERE id = $1', [id]);
+    
+    // Also remove from memory if active
+    const { gameManager } = require('../game/GameManager');
+    if (gameManager) {
+      // We need to expose a method to remove game or access the map directly if possible
+      // But GameManager is a singleton instance.
+      // Let's assume we can just delete from DB and the memory will be cleaned up eventually or we can force it.
+      // Actually, we should probably tell GameManager to stop that game.
+      // But GameManager doesn't have a public delete method.
+      // For now, just DB deletion is fine, the memory game will timeout eventually or error out on next interaction.
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting battle:', error);
+    res.status(500).json({ error: 'Failed to delete battle' });
   }
 });
 

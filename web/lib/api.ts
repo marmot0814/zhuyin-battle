@@ -24,5 +24,17 @@ export async function api(endpoint: string, options: FetchOptions = {}) {
     headers,
   });
 
+  // Handle token expiration or invalid auth
+  if (response.status === 401 || response.status === 403) {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      // Optional: Redirect to home or login if not already there
+      if (window.location.pathname !== '/' && window.location.pathname !== '/lobby') {
+         window.location.href = '/';
+      }
+    }
+  }
+
   return response;
 }

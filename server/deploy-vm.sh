@@ -28,6 +28,7 @@ tar -czf ../server-deploy.tar.gz \
   --exclude='node_modules' \
   --exclude='dist' \
   --exclude='.git' \
+  --exclude='public' \
   .
 
 # 3. 上傳到 VM
@@ -94,7 +95,7 @@ echo "服務 URL: http://${EXTERNAL_IP}:3001"
 echo ""
 echo "測試 health endpoint:"
 sleep 3
-curl http://${EXTERNAL_IP}:3001/health || echo "服務可能還在啟動中，請稍後再試"
+curl http://${EXTERNAL_IP}:3001/api/health || echo "服務可能還在啟動中，請稍後再試"
 echo ""
 echo ""
 echo "下一步："
@@ -110,4 +111,4 @@ echo "   gcloud compute ssh ${VM_NAME} --zone=${ZONE}"
 echo "   pm2 restart zhuyin-server"
 
 # 清理
-rm -f ../server-deploy.tar.gz .env
+rm -f ../server-deploy.tar.gz

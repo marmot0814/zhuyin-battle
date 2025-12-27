@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 -- Battles table (for matchmaking)
 CREATE TABLE IF NOT EXISTS battles (
-  id SERIAL PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   player1_id INT NOT NULL,
   player2_id INT NOT NULL,
   mode VARCHAR(20) NOT NULL, -- 'ranked', 'casual', 'friend'
