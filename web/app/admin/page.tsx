@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { api } from '../../lib/api';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 interface User {
   id: number;
@@ -89,11 +89,11 @@ export default function AdminPage() {
       };
       
       const [usersRes, friendsRes, statsRes, ratingRes, recentRes] = await Promise.all([
-        fetch(`${API_URL}/api/admin/users`, { headers }),
-        fetch(`${API_URL}/api/admin/friends`, { headers }),
-        fetch(`${API_URL}/api/admin/stats`, { headers }),
-        fetch(`${API_URL}/api/admin/rating-distribution`, { headers }),
-        fetch(`${API_URL}/api/admin/recent-users`, { headers })
+        api('/api/admin/users', { headers }),
+        api('/api/admin/friends', { headers }),
+        api('/api/admin/stats', { headers }),
+        api('/api/admin/rating-distribution', { headers }),
+        api('/api/admin/recent-users', { headers })
       ]);
       
       console.log('Users response status:', usersRes.status);

@@ -2,8 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { api } from '../../lib/api';
 
 // 20 個預設頭像選項
 const AVATAR_OPTIONS = [
@@ -92,17 +91,11 @@ export default function LobbyPage() {
     if (!token) return;
 
     // 初次 ping
-    fetch(`${API_URL}/api/friends/ping`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
+    api('/api/friends/ping', { method: 'POST' });
 
     // 每 20 秒 ping 一次
     const interval = setInterval(() => {
-      fetch(`${API_URL}/api/friends/ping`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      api('/api/friends/ping', { method: 'POST' });
     }, 20000);
 
     return () => clearInterval(interval);
@@ -117,15 +110,9 @@ export default function LobbyPage() {
     async function loadFriendsAndUsers() {
       try {
         const [friendsRes, usersRes, requestsRes] = await Promise.all([
-          fetch(`${API_URL}/api/friends/my-friends`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }),
-          fetch(`${API_URL}/api/friends/online-users`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }),
-          fetch(`${API_URL}/api/friends/pending-requests`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          })
+          api('/api/friends/my-friends'),
+          api('/api/friends/online-users'),
+          api('/api/friends/pending-requests')
         ]);
         
         if (friendsRes.ok) {
@@ -160,12 +147,7 @@ export default function LobbyPage() {
       // 呼叫後端登出 API
       const token = localStorage.getItem('token');
       if (token) {
-        await fetch(`${API_URL}/api/users/logout`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
+        await api('/api/users/logout', { method: 'POST' });
       }
     } catch (error) {
       console.error('Logout error:', error);
@@ -173,7 +155,7 @@ export default function LobbyPage() {
       // 清除本地資料並導向首頁
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      router.replace('/?forceLogin=true');
+      router.replace('/');
     }
   }
 
@@ -187,13 +169,8 @@ export default function LobbyPage() {
   // 更新個人資料
   async function handleUpdateProfile() {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/users/me`, {
+      const response = await api('/api/users/me', {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
         body: JSON.stringify({ 
           username: editUsername,
           bio: editBio 
@@ -222,13 +199,8 @@ export default function LobbyPage() {
     
     // 更新到伺服器
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/users/me`, {
+      const response = await api('/api/users/me', {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
         body: JSON.stringify({ avatar_url: avatarUrl })
       });
 
@@ -246,10 +218,7 @@ export default function LobbyPage() {
   // 查看用戶詳情
   async function viewUserDetail(userId: number) {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/friends/user/${userId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const response = await api(`/api/friends/user/${userId}`);
       
       if (response.ok) {
         const userData = await response.json();
@@ -264,18 +233,12 @@ export default function LobbyPage() {
   // 發送好友請求
   async function sendFriendRequest(userId: number) {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/friends/add-friend/${userId}`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const response = await api(`/api/friends/add-friend/${userId}`, { method: 'POST' });
       
       if (response.ok) {
         alert('好友請求已發送！');
         // 更新線上用戶列表
-        const usersRes = await fetch(`${API_URL}/api/friends/online-users`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const usersRes = await api('/api/friends/online-users');
         if (usersRes.ok) {
           setOnlineUsers(await usersRes.json());
         }
@@ -291,23 +254,13 @@ export default function LobbyPage() {
   // 接受好友請求
   async function acceptFriendRequest(requestId: number) {
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API_URL}/api/friends/accept-friend/${requestId}`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await api(`/api/friends/accept-friend/${requestId}`, { method: 'POST' });
       if (res.ok) {
         // 重新載入好友列表、請求列表和線上玩家列表
         const [friendsRes, requestsRes, usersRes] = await Promise.all([
-          fetch(`${API_URL}/api/friends/my-friends`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }),
-          fetch(`${API_URL}/api/friends/pending-requests`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }),
-          fetch(`${API_URL}/api/friends/online-users`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          })
+          api('/api/friends/my-friends'),
+          api('/api/friends/pending-requests'),
+          api('/api/friends/online-users')
         ]);
         if (friendsRes.ok) setFriends(await friendsRes.json());
         if (requestsRes.ok) setFriendRequests(await requestsRes.json());
@@ -321,16 +274,10 @@ export default function LobbyPage() {
   // 拒絕好友請求
   async function rejectFriendRequest(requestId: number) {
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API_URL}/api/friends/reject-friend/${requestId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await api(`/api/friends/reject-friend/${requestId}`, { method: 'DELETE' });
       if (res.ok) {
         // 重新載入請求列表
-        const requestsRes = await fetch(`${API_URL}/api/friends/pending-requests`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const requestsRes = await api('/api/friends/pending-requests');
         if (requestsRes.ok) {
           setFriendRequests(await requestsRes.json());
         }
@@ -345,16 +292,10 @@ export default function LobbyPage() {
     if (!confirm('確定要刪除這位好友嗎？')) return;
     
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API_URL}/api/friends/remove-friend/${friendId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await api(`/api/friends/remove-friend/${friendId}`, { method: 'DELETE' });
       if (res.ok) {
         // 重新載入好友列表
-        const friendsRes = await fetch(`${API_URL}/api/friends/my-friends`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const friendsRes = await api('/api/friends/my-friends');
         if (friendsRes.ok) {
           setFriends(await friendsRes.json());
         }
@@ -379,10 +320,7 @@ export default function LobbyPage() {
   // 載入聊天記錄
   async function loadMessages(friendId: number) {
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API_URL}/api/friends/messages/${friendId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await api(`/api/friends/messages/${friendId}`);
       if (res.ok) {
         const data = await res.json();
         setMessages(data);
@@ -397,13 +335,8 @@ export default function LobbyPage() {
     if (!newMessage.trim() || !chatFriend) return;
     
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API_URL}/api/friends/send-message/${chatFriend.id}`, {
+      const res = await api(`/api/friends/send-message/${chatFriend.id}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
         body: JSON.stringify({ content: newMessage })
       });
       
@@ -444,13 +377,8 @@ export default function LobbyPage() {
       setMatchMode(mode);
       setMatchStatus('waiting');
 
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/matchmaking/queue/join`, {
+      const response = await api('/api/matchmaking/queue/join', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
         body: JSON.stringify({ mode })
       });
 
@@ -486,10 +414,7 @@ export default function LobbyPage() {
   function startMatchPolling() {
     const pollInterval = setInterval(async () => {
       try {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${API_URL}/api/matchmaking/queue/status`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const response = await api('/api/matchmaking/queue/status');
 
         if (!response.ok) {
           clearInterval(pollInterval);
@@ -521,11 +446,7 @@ export default function LobbyPage() {
   // 取消匹配
   async function cancelMatching() {
     try {
-      const token = localStorage.getItem('token');
-      await fetch(`${API_URL}/api/matchmaking/queue/leave`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      await api('/api/matchmaking/queue/leave', { method: 'POST' });
 
       // 清除輪詢
       if ((window as any).matchPollInterval) {
@@ -543,18 +464,12 @@ export default function LobbyPage() {
   // 加好友（保留舊函數給用戶詳情頁使用）
   async function addFriend(userId: number) {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/friends/add-friend/${userId}`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const response = await api(`/api/friends/add-friend/${userId}`, { method: 'POST' });
       
       if (response.ok) {
         alert('好友請求已發送！');
         // 重新載入請求列表
-        const requestsRes = await fetch(`${API_URL}/api/friends/pending-requests`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const requestsRes = await api('/api/friends/pending-requests');
         if (requestsRes.ok) {
           setFriendRequests(await requestsRes.json());
         }

@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
 import { useRouter } from 'next/navigation';
+import { api } from '../lib/api';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 function Typewriter(props: { text: string; phoneticMap?: Record<string, string>; phoneticDelay?: number; charDelay?: number; className?: string }) {
   const { text, phoneticMap = {}, phoneticDelay = 600, charDelay = 40, className } = props;
@@ -56,25 +56,15 @@ export default function LandingPage() {
 
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
-  const [forceLogin, setForceLogin] = useState(false);
 
-  // 1. 檢查是否已經登入，若有則直接跳轉（除非強制登入）
+  // 1. 檢查是否已經登入，若有則直接跳轉
   useEffect(() => {
     const token = localStorage.getItem('token');
-    const urlParams = new URLSearchParams(window.location.search);
-    const shouldForceLogin = urlParams.get('forceLogin') === 'true';
     
-    if (token && !shouldForceLogin) {
-      // 修正點 2: 直接自動跳轉，不顯示按鈕
+    if (token) {
       router.replace('/lobby'); 
     } else {
-      if (shouldForceLogin) {
-        // 清除舊的登入資料
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        setForceLogin(true);
-      }
-      setIsLoading(false); // 沒登入才停止 loading 狀態顯示登入畫面
+      setIsLoading(false);
     }
   }, [router]);
 
@@ -89,9 +79,8 @@ export default function LandingPage() {
         const googleUser = await userInfoRes.json();
 
         // 將 Google 使用者資訊送到後端
-        const res = await fetch(`${API_URL}/api/users/google-login`, {
+        const res = await api('/api/users/google-login', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ googleUser }), 
         });
 

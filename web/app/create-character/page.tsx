@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { api } from '../../lib/api';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 export default function CreateCharacter() {
   const router = useRouter();
@@ -52,9 +52,8 @@ export default function CreateCharacter() {
     setIsSubmitting(true);
 
     try {
-      const res = await fetch(`${API_URL}/api/users/create-character`, {
+      const res = await api('/api/users/create-character', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email,
           username: username.trim(),
