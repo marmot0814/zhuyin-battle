@@ -1,6 +1,7 @@
 
 // 排位等級系統
-export function getRankInfo(rating: number) {
+export function getRankInfo(rating: number | null) {
+  if (rating === null) return { name: 'UNRANKED', nameZh: '定級中', color: 'text-slate-500' };
   if (rating < 800) return { name: 'IRON', nameZh: '鐵牌', color: 'text-slate-400' };
   if (rating < 1000) return { name: 'BRONZE', nameZh: '銅牌', color: 'text-amber-700' };
   if (rating < 1200) return { name: 'SILVER', nameZh: '銀牌', color: 'text-slate-300' };

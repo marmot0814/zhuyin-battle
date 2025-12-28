@@ -4,7 +4,7 @@ import { api } from '../../../lib/api';
 
 interface ActiveBattle {
   id: number;
-  mode: 'ranked' | 'casual';
+  mode: string;
   created_at: string;
   player1_id: number;
   player1_name: string;
@@ -55,13 +55,26 @@ export default function ActiveBattleList({ user }: ActiveBattleListProps) {
     >
       <div className="flex justify-between items-center mb-2">
         <div className="flex items-center gap-2">
+          {/* Game Type Tag */}
           <span className={`text-xs px-2 py-0.5 rounded-full ${
-            battle.mode === 'ranked' 
+            battle.mode.includes('ranked')
               ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' 
-              : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+              : battle.mode.includes('custom')
+                ? 'bg-pink-500/20 text-pink-400 border border-pink-500/30'
+                : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
           }`}>
-            {battle.mode === 'ranked' ? '積分對戰' : '一般對戰'}
+            {battle.mode.includes('ranked') ? '積分' : battle.mode.includes('custom') ? '好友' : '一般'}
           </span>
+
+          {/* Game Mode Tag */}
+          <span className={`text-xs px-2 py-0.5 rounded-full ${
+            battle.mode.includes('rts')
+              ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' 
+              : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+          }`}>
+            {battle.mode.includes('rts') ? '即時' : '回合'}
+          </span>
+
           {isMyBattle && (
             <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30 animate-pulse">
               進行中

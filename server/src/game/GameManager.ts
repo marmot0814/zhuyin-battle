@@ -3,21 +3,19 @@ import path from 'path';
 import { query } from '../db';
 
 const DICTIONARY_PATH = path.join(__dirname, '../../clean_bopomofo.txt');
-const PHONETICS = [
+const INITIALS = [
   'ㄅ', 'ㄆ', 'ㄇ', 'ㄈ', 'ㄉ', 'ㄊ', 'ㄋ', 'ㄌ', 'ㄍ', 'ㄎ', 'ㄏ',
-  'ㄐ', 'ㄑ', 'ㄒ', 'ㄓ', 'ㄔ', 'ㄕ', 'ㄖ', 'ㄗ', 'ㄘ', 'ㄙ',
+  'ㄐ', 'ㄑ', 'ㄒ', 'ㄓ', 'ㄔ', 'ㄕ', 'ㄖ', 'ㄗ', 'ㄘ', 'ㄙ'
+];
+const FINALS = [
   'ㄧ', 'ㄨ', 'ㄩ', 'ㄚ', 'ㄛ', 'ㄜ', 'ㄝ', 'ㄞ', 'ㄟ', 'ㄠ', 'ㄡ', 'ㄢ', 'ㄣ', 'ㄤ', 'ㄥ', 'ㄦ'
 ];
-
-// Weighted phonetics could be better, but uniform for now
-function getRandomPhonetic() {
-  return PHONETICS[Math.floor(Math.random() * PHONETICS.length)];
-}
+const PHONETICS = [...INITIALS, ...FINALS];
 
 interface Tile {
   r: number;
   c: number;
-  state: 'empty' | 'red_castle' | 'blue_castle' | 'red_territory' | 'blue_territory';
+  state: 'empty' | 'white_empty' | 'white_phonetic' | 'red_castle' | 'blue_castle' | 'red_territory' | 'blue_territory';
   phonetic: string | null;
   owner: number | null; // playerId
 }
@@ -28,16 +26,25 @@ interface GameState {
   player2Id: number; // Blue
   player1Name: string;
   player2Name: string;
-  gameMode: 'ranked' | 'casual' | 'custom';
+  gameMode: 'ranked' | 'casual' | 'custom' | 'ranked_rts' | 'casual_rts' | 'custom_rts';
   board: Tile[][];
   turn: number; // playerId
   timer: {
     [playerId: number]: number; // seconds remaining
   };
   lastActionTime: number;
-  status: 'playing' | 'finished';
+  status: 'playing' | 'finished' | 'paused';
   winner: number | null;
   logs: string[];
+  skillCharges: { [playerId: number]: number };
+  skillInventory: { [playerId: number]: number };
+  timeSettings?: {
+    type: 'unlimited' | 'increment';
+    baseTime?: number;
+    increment?: number;
+  };
+  pauseRequest: { requesterId: number } | null;
+  resumeRequest: { requesterId: number } | null;
 }
 
 class GameManager {
@@ -66,9 +73,70 @@ class GameManager {
     }
   }
 
-  public async createGame(battleId: string, player1Id: number, player2Id: number, player1Name: string, player2Name: string, gameMode: 'ranked' | 'casual' | 'custom') {
+  private generateBalancedPhonetic(board: Tile[][]): string {
+    let initialCount = 0;
+    let finalCount = 0;
+    const existingPhonetics = new Map<string, number>();
+
+    for (const row of board) {
+      for (const tile of row) {
+        if (tile.phonetic) {
+          existingPhonetics.set(tile.phonetic, (existingPhonetics.get(tile.phonetic) || 0) + 1);
+          if (INITIALS.includes(tile.phonetic)) {
+            initialCount++;
+          } else if (FINALS.includes(tile.phonetic)) {
+            finalCount++;
+          }
+        }
+      }
+    }
+
+    let targetPool: string[];
+    if (initialCount > finalCount + 2) {
+      targetPool = FINALS;
+    } else if (finalCount > initialCount + 2) {
+      targetPool = INITIALS;
+    } else {
+      targetPool = Math.random() < 0.5 ? INITIALS : FINALS;
+    }
+
+    // Sort by frequency
+    targetPool.sort((a, b) => {
+      const countA = existingPhonetics.get(a) || 0;
+      const countB = existingPhonetics.get(b) || 0;
+      return countA - countB;
+    });
+
+    const minFreq = existingPhonetics.get(targetPool[0]) || 0;
+    const candidates = targetPool.filter(p => (existingPhonetics.get(p) || 0) === minFreq);
+
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  public async createGame(
+    battleId: string, 
+    player1Id: number, 
+    player2Id: number, 
+    player1Name: string, 
+    player2Name: string, 
+    gameMode: 'ranked' | 'casual' | 'custom' | 'ranked_rts' | 'casual_rts' | 'custom_rts',
+    timeSettings?: { type: 'unlimited' | 'increment', baseTime?: number, increment?: number }
+  ) {
     const board = this.initBoard(player1Id, player2Id);
     
+    const isRts = gameMode.includes('rts');
+    
+    let initialTime = 60;
+    if (timeSettings) {
+      if (timeSettings.type === 'unlimited') {
+        initialTime = 999999;
+      } else if (timeSettings.type === 'increment') {
+        initialTime = timeSettings.baseTime || 60;
+      }
+    } else if (isRts) {
+      initialTime = 0;
+    }
+
     const game: GameState = {
       battleId,
       player1Id,
@@ -79,13 +147,18 @@ class GameManager {
       board,
       turn: player1Id, // Player 1 starts
       timer: {
-        [player1Id]: 120,
-        [player2Id]: 120
+        [player1Id]: initialTime,
+        [player2Id]: initialTime
       },
       lastActionTime: Date.now(),
       status: 'playing',
       winner: null,
-      logs: [`Game started! ${player1Name} (Red) vs ${player2Name} (Blue)`]
+      logs: [`Game started! ${player1Name} (Red) vs ${player2Name} (Blue)`],
+      skillCharges: { [player1Id]: 0, [player2Id]: 0 },
+      skillInventory: { [player1Id]: 0, [player2Id]: 0 },
+      timeSettings,
+      pauseRequest: null,
+      resumeRequest: null
     };
 
     this.games.set(battleId, game);
@@ -96,72 +169,45 @@ class GameManager {
     const board: Tile[][] = [];
     for (let r = 0; r < this.ROWS; r++) {
       const row: Tile[] = [];
+      board.push(row);
       for (let c = 0; c < this.COLS; c++) {
-        row.push({
+        const tile: Tile = {
           r, c,
-          state: 'empty',
+          state: 'white_phonetic',
           phonetic: null,
           owner: null
-        });
+        };
+        row.push(tile);
+        tile.phonetic = this.generateBalancedPhonetic(board);
       }
-      board.push(row);
     }
 
     // Set Castles
     // Red (P1): Top Right [0, 7]
     board[0][this.COLS - 1].state = 'red_castle';
     board[0][this.COLS - 1].owner = p1;
+    board[0][this.COLS - 1].phonetic = null;
 
     // Blue (P2): Bottom Left [7, 0]
     board[this.ROWS - 1][0].state = 'blue_castle';
     board[this.ROWS - 1][0].owner = p2;
-
-    // Initial Frontier
-    this.updateFrontier(board, p1);
-    this.updateFrontier(board, p2);
+    board[this.ROWS - 1][0].phonetic = null;
 
     return board;
-  }
-
-  private updateFrontier(board: Tile[][], playerId: number) {
-    // Find all tiles owned by player
-    // Find neighbors that are empty/neutral
-    // Assign phonetic if null
-    
-    for (let r = 0; r < this.ROWS; r++) {
-      for (let c = 0; c < this.COLS; c++) {
-        const tile = board[r][c];
-        if (tile.owner === playerId) {
-          const neighbors = this.getNeighbors(r, c);
-          for (const [nr, nc] of neighbors) {
-            const neighbor = board[nr][nc];
-            if (neighbor.state === 'empty' && neighbor.phonetic === null) {
-              neighbor.phonetic = getRandomPhonetic();
-            }
-          }
-        }
-      }
-    }
   }
 
   private regenerateFrontier(board: Tile[][], playerId: number) {
     for (let r = 0; r < this.ROWS; r++) {
       for (let c = 0; c < this.COLS; c++) {
         const tile = board[r][c];
-        // If it's an empty tile with a phonetic, it might be part of the frontier
-        // We can just reset all empty tiles with phonetics to new random ones
-        // Or be more specific to the player's frontier.
-        // Let's just re-roll all empty tiles that have phonetics near this player's territory.
-        if (tile.state === 'empty' && tile.phonetic !== null) {
-           // Check if it neighbors this player's territory
-           const neighbors = this.getNeighbors(r, c);
-           if (neighbors.some(([nr, nc]) => board[nr][nc].owner === playerId)) {
-             tile.phonetic = getRandomPhonetic();
-           }
+        if (tile.state === 'white_phonetic' || tile.state === 'white_empty') {
+           tile.phonetic = this.generateBalancedPhonetic(board);
+           tile.state = 'white_phonetic';
         }
       }
     }
   }
+
 
   private isSolvable(board: Tile[][], playerId: number): boolean {
     // DFS to find if any valid word can be formed starting from any tile
@@ -178,7 +224,7 @@ class GameManager {
     for (let r = 0; r < this.ROWS; r++) {
       for (let c = 0; c < this.COLS; c++) {
         const tile = board[r][c];
-        if (tile.state === 'empty' && tile.phonetic) {
+        if ((tile.state === 'white_phonetic' || tile.state === 'white_empty') && tile.phonetic) {
           const neighbors = this.getNeighbors(r, c);
           if (neighbors.some(([nr, nc]) => board[nr][nc].owner === playerId)) {
             startNodes.push({r, c});
@@ -223,7 +269,7 @@ class GameManager {
 
     const neighbors = this.getNeighbors(r, c);
     for (const [nr, nc] of neighbors) {
-      if (board[nr][nc].state === 'empty' && board[nr][nc].phonetic) {
+      if ((board[nr][nc].state === 'white_phonetic' || board[nr][nc].state === 'white_empty') && board[nr][nc].phonetic) {
         if (this.dfsFindWord(board, nr, nc, visited, newWord)) {
           return true;
         }
@@ -262,7 +308,20 @@ class GameManager {
     const game = this.games.get(battleId);
     if (!game) throw new Error('Game not found');
     if (game.status !== 'playing') throw new Error('Game is finished');
-    if (game.turn !== playerId) throw new Error('Not your turn');
+    
+    const isRts = game.gameMode === 'ranked_rts';
+
+    if (!isRts && game.turn !== playerId) throw new Error('Not your turn');
+
+    // RTS Race Condition Check
+    if (isRts) {
+      for (const p of sequence) {
+        const tile = game.board[p.r][p.c];
+        if (tile.owner !== null && tile.owner !== playerId) {
+           throw new Error(`Tile at (${p.r}, ${p.c}) is already occupied`);
+        }
+      }
+    }
 
     // 1. Validate Sequence Connectivity
     if (sequence.length === 0) throw new Error('Empty sequence');
@@ -369,9 +428,9 @@ class GameManager {
     // Apply changes only to captured tiles
     for (const p of sequence) {
       const key = `${p.r},${p.c}`;
+      const tile = game.board[p.r][p.c];
+
       if (captured.has(key)) {
-        const tile = game.board[p.r][p.c];
-        
         const neighbors = this.getNeighbors(p.r, p.c);
         for (const [nr, nc] of neighbors) {
           const neighbor = game.board[nr][nc];
@@ -383,23 +442,29 @@ class GameManager {
           
           // Destroy adjacent opponent territory
           if (neighbor.owner === opponentId && neighbor.state !== opponentCastleState) {
-            neighbor.state = 'empty';
+            neighbor.state = 'white_phonetic';
             neighbor.owner = null;
-            neighbor.phonetic = getRandomPhonetic();
+            neighbor.phonetic = this.generateBalancedPhonetic(game.board);
           }
         }
 
         // Update tile ownership
-        if (tile.state === 'empty') { // Can capture empty
+        if (tile.state === 'white_phonetic' || tile.state === 'white_empty') { // Can capture empty
            tile.state = playerId === game.player1Id ? 'red_territory' : 'blue_territory';
            tile.owner = playerId;
            tile.phonetic = null; 
         }
+      } else {
+        // Reroll non-captured tiles in sequence
+        if (tile.state === 'white_phonetic' || tile.state === 'white_empty') {
+          tile.phonetic = this.generateBalancedPhonetic(game.board);
+          tile.state = 'white_phonetic';
+        }
       }
     }
 
-    // Update Frontier
-    this.updateFrontier(game.board, playerId);
+    // Update Frontier (No longer needed as all tiles have phonetics, but maybe for solvability check?)
+    // this.updateFrontier(game.board, playerId);
     
     // Ensure Solvability (Check if at least one valid word exists from frontier)
     // If not, regenerate some frontier tiles
@@ -411,10 +476,29 @@ class GameManager {
     }
 
     // Update Timer
-    game.timer[playerId] += 30;
+    if (!isRts) {
+      if (game.timeSettings?.type === 'increment') {
+        game.timer[playerId] += (game.timeSettings.increment || 0);
+      } else if (!game.timeSettings) {
+        game.timer[playerId] += 60; // Default legacy behavior
+      }
+    }
+
+    // Update Skill Charges
+    game.skillCharges[playerId] = (game.skillCharges[playerId] || 0) + 1;
+    if (game.skillCharges[playerId] >= 3) {
+      if (game.skillInventory[playerId] < 2) {
+        game.skillInventory[playerId] += 1;
+        game.skillCharges[playerId] -= 3;
+      } else {
+        game.skillCharges[playerId] = 3; // Cap at 3 if inventory full
+      }
+    }
     
     // Switch Turn
-    game.turn = opponentId;
+    if (!isRts) {
+      game.turn = opponentId;
+    }
     game.lastActionTime = Date.now();
 
     // Check Win
@@ -428,15 +512,129 @@ class GameManager {
     return { success: true, word };
   }
 
+  public useSkill(battleId: string, playerId: number) {
+    const game = this.games.get(battleId);
+    if (!game) throw new Error('Game not found');
+    if (game.status !== 'playing') throw new Error('Game finished');
+    
+    const isRts = game.gameMode === 'ranked_rts';
+    if (!isRts && game.turn !== playerId) throw new Error('Not your turn');
+    
+    if (game.skillInventory[playerId] < 1) {
+        throw new Error('No skill charges available');
+    }
+
+    // Consume charge
+    game.skillInventory[playerId] -= 1;
+
+    // Effect: Shuffle all white tiles
+    for (let r = 0; r < this.ROWS; r++) {
+      for (let c = 0; c < this.COLS; c++) {
+        const tile = game.board[r][c];
+        if (tile.state === 'white_phonetic' || tile.state === 'white_empty') {
+          tile.phonetic = this.generateBalancedPhonetic(game.board);
+          tile.state = 'white_phonetic';
+        }
+      }
+    }
+    
+    const playerName = playerId === game.player1Id ? game.player1Name : game.player2Name;
+    game.logs.push(`${playerName} used Shuffle Skill!`);
+    
+    return { success: true };
+  }
+
+  public surrender(battleId: string, playerId: number) {
+    const game = this.games.get(battleId);
+    if (!game || game.status === 'finished') return { error: 'Game not found or finished' };
+    
+    if (game.player1Id !== playerId && game.player2Id !== playerId) {
+      return { error: 'Not a player' };
+    }
+
+    const winner = playerId === game.player1Id ? game.player2Id : game.player1Id;
+    this.endGame(game, winner, 'surrender');
+    return { success: true };
+  }
+
+  public requestTimeout(battleId: string, playerId: number) {
+    const game = this.games.get(battleId);
+    if (!game || game.status === 'finished') return { error: 'Game not found or finished' };
+    if (game.status === 'paused') return { error: 'Game already paused' };
+    
+    if (game.player1Id !== playerId && game.player2Id !== playerId) {
+      return { error: 'Not a player' };
+    }
+
+    if (game.pauseRequest) return { error: 'Pause request already pending' };
+
+    game.pauseRequest = { requesterId: playerId };
+    game.logs.push(`${playerId === game.player1Id ? game.player1Name : game.player2Name} requested a timeout.`);
+    return { success: true };
+  }
+
+  public respondTimeout(battleId: string, playerId: number, accept: boolean) {
+    const game = this.games.get(battleId);
+    if (!game || game.status === 'finished') return { error: 'Game not found or finished' };
+    
+    if (!game.pauseRequest) return { error: 'No pending pause request' };
+    if (game.pauseRequest.requesterId === playerId) return { error: 'Cannot respond to own request' };
+
+    if (accept) {
+      game.status = 'paused';
+      game.logs.push(`Timeout accepted. Game paused.`);
+    } else {
+      game.logs.push(`Timeout rejected.`);
+    }
+    game.pauseRequest = null;
+    return { success: true };
+  }
+
+  public requestResume(battleId: string, playerId: number) {
+    const game = this.games.get(battleId);
+    if (!game || game.status !== 'paused') return { error: 'Game not paused' };
+    
+    if (game.player1Id !== playerId && game.player2Id !== playerId) {
+      return { error: 'Not a player' };
+    }
+
+    if (game.resumeRequest) return { error: 'Resume request already pending' };
+
+    game.resumeRequest = { requesterId: playerId };
+    game.logs.push(`${playerId === game.player1Id ? game.player1Name : game.player2Name} requested to resume.`);
+    return { success: true };
+  }
+
+  public respondResume(battleId: string, playerId: number, accept: boolean) {
+    const game = this.games.get(battleId);
+    if (!game || game.status !== 'paused') return { error: 'Game not paused' };
+    
+    if (!game.resumeRequest) return { error: 'No pending resume request' };
+    if (game.resumeRequest.requesterId === playerId) return { error: 'Cannot respond to own request' };
+
+    if (accept) {
+      game.status = 'playing';
+      game.lastActionTime = Date.now(); // Reset action time to avoid immediate timeout
+      game.logs.push(`Resume accepted. Game continuing.`);
+    } else {
+      game.logs.push(`Resume rejected.`);
+    }
+    game.resumeRequest = null;
+    return { success: true };
+  }
+
   private tick() {
     const now = Date.now();
     for (const game of this.games.values()) {
       if (game.status === 'playing') {
         const elapsed = (now - game.lastActionTime) / 1000;
-        // We don't subtract from stored timer here because we want to sync with requests?
-        // Actually, better to just decrement the current turn player's timer.
-        // But `tick` runs every second.
         
+        // Skip timer for RTS
+        if (game.gameMode.includes('rts')) continue;
+
+        // Skip if unlimited
+        if (game.timeSettings?.type === 'unlimited') continue;
+
         // Let's just decrement the current player's timer
         if (game.timer[game.turn] > 0) {
           game.timer[game.turn] -= 1;
@@ -462,7 +660,7 @@ class GameManager {
       const p1 = game.player1Id;
       const p2 = game.player2Id;
       
-      const res = await query(`SELECT id, rating FROM users WHERE id IN ($1, $2)`, [p1, p2]);
+      const res = await query(`SELECT id, rating, rts_rating FROM users WHERE id IN ($1, $2)`, [p1, p2]);
       const users = res.rows;
       const user1 = users.find(u => u.id === p1);
       const user2 = users.find(u => u.id === p2);
@@ -472,9 +670,11 @@ class GameManager {
         const actualScore1 = winnerId === p1 ? 1 : 0;
         const actualScore2 = winnerId === p2 ? 1 : 0;
         
-        // Calculate new ratings if ranked
+        // Calculate new ratings
         let newRating1 = user1.rating;
         let newRating2 = user2.rating;
+        let newRtsRating1 = user1.rts_rating || 1200;
+        let newRtsRating2 = user2.rts_rating || 1200;
 
         if (game.gameMode === 'ranked') {
           const expected1 = 1 / (1 + Math.pow(10, (user2.rating - user1.rating) / 400));
@@ -482,37 +682,50 @@ class GameManager {
 
           newRating1 = Math.round(user1.rating + k * (actualScore1 - expected1));
           newRating2 = Math.round(user2.rating + k * (actualScore2 - expected2));
+        } else if (game.gameMode === 'ranked_rts') {
+          const r1 = user1.rts_rating || 1200;
+          const r2 = user2.rts_rating || 1200;
+          const expected1 = 1 / (1 + Math.pow(10, (r2 - r1) / 400));
+          const expected2 = 1 / (1 + Math.pow(10, (r1 - r2) / 400));
+
+          newRtsRating1 = Math.round(r1 + k * (actualScore1 - expected1));
+          newRtsRating2 = Math.round(r2 + k * (actualScore2 - expected2));
         }
 
-        // Update User 1
-        let query1 = `UPDATE users SET games_played = games_played + 1, games_won = games_won + $1`;
-        const params1: any[] = [actualScore1];
-        
-        if (game.gameMode === 'ranked') {
-          query1 += `, rating = $2, ranked_games_played = ranked_games_played + 1, ranked_games_won = ranked_games_won + $3`;
-          params1.push(newRating1, actualScore1);
-        } else {
-          query1 += `, casual_games_played = casual_games_played + 1, casual_games_won = casual_games_won + $2`;
-          params1.push(actualScore1);
-        }
-        query1 += ` WHERE id = $${params1.length + 1}`;
-        params1.push(p1);
-        await query(query1, params1);
+        // Helper to update user
+        const updateUser = async (userId: number, actualScore: number, newRating: number, newRtsRating: number) => {
+            let q = `UPDATE users SET games_played = games_played + 1, games_won = games_won + $1`;
+            const params: any[] = [actualScore];
+            
+            if (game.gameMode === 'ranked') {
+                q += `, rating = $2, ranked_games_played = ranked_games_played + 1, ranked_games_won = ranked_games_won + $3`;
+                params.push(newRating, actualScore);
+            } else if (game.gameMode === 'casual') {
+                q += `, casual_games_played = casual_games_played + 1, casual_games_won = casual_games_won + $2`;
+                params.push(actualScore);
+            } else if (game.gameMode === 'custom') {
+                q += `, custom_games_played = custom_games_played + 1, custom_games_won = custom_games_won + $2`;
+                params.push(actualScore);
+            } else if (game.gameMode === 'ranked_rts') {
+                q += `, rts_rating = $2, rts_games_played = rts_games_played + 1, rts_games_won = rts_games_won + $3`;
+                q += `, rts_ranked_games_played = rts_ranked_games_played + 1, rts_ranked_games_won = rts_ranked_games_won + $3`;
+                params.push(newRtsRating, actualScore);
+            } else if (game.gameMode === 'casual_rts') {
+                q += `, rts_games_played = rts_games_played + 1, rts_games_won = rts_games_won + $2`;
+                q += `, rts_casual_games_played = rts_casual_games_played + 1, rts_casual_games_won = rts_casual_games_won + $2`;
+                params.push(actualScore);
+            } else if (game.gameMode === 'custom_rts') {
+                q += `, rts_games_played = rts_games_played + 1, rts_games_won = rts_games_won + $2`;
+                q += `, rts_custom_games_played = rts_custom_games_played + 1, rts_custom_games_won = rts_custom_games_won + $2`;
+                params.push(actualScore);
+            }
+            q += ` WHERE id = $${params.length + 1}`;
+            params.push(userId);
+            await query(q, params);
+        };
 
-        // Update User 2
-        let query2 = `UPDATE users SET games_played = games_played + 1, games_won = games_won + $1`;
-        const params2: any[] = [actualScore2];
-        
-        if (game.gameMode === 'ranked') {
-          query2 += `, rating = $2, ranked_games_played = ranked_games_played + 1, ranked_games_won = ranked_games_won + $3`;
-          params2.push(newRating2, actualScore2);
-        } else {
-          query2 += `, casual_games_played = casual_games_played + 1, casual_games_won = casual_games_won + $2`;
-          params2.push(actualScore2);
-        }
-        query2 += ` WHERE id = $${params2.length + 1}`;
-        params2.push(p2);
-        await query(query2, params2);
+        await updateUser(p1, actualScore1, newRating1, newRtsRating1);
+        await updateUser(p2, actualScore2, newRating2, newRtsRating2);
       }
 
       // Delete battle from DB as requested

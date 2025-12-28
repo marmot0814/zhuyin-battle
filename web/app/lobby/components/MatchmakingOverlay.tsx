@@ -4,7 +4,7 @@ import RankIcon from '../../components/RankIcons';
 interface MatchmakingOverlayProps {
   isMatching: boolean;
   matchStatus: 'waiting' | 'matched' | null;
-  matchMode: 'ranked' | 'casual' | null;
+  matchMode: 'ranked' | 'casual' | 'ranked_rts' | 'casual_rts' | null;
   cancelMatching: () => void;
   opponent: any;
 }
@@ -35,7 +35,9 @@ export default function MatchmakingOverlay({
             
             <h3 className="text-2xl font-bold text-white mb-2">正在尋找對手...</h3>
             <p className="text-slate-400 mb-8">
-              {matchMode === 'ranked' ? '積分對戰' : '一般對戰'} • 預計等待時間: 30秒
+              {matchMode === 'ranked' ? '積分對戰' : 
+               matchMode === 'ranked_rts' ? '即時積分' : 
+               matchMode === 'casual_rts' ? '即時一般' : '一般對戰'} • 預計等待時間: 30秒
             </p>
             
             <button

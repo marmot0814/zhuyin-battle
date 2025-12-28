@@ -65,6 +65,11 @@ export default function SocialPanel({
                   title="聊天"
                 >
                   💬
+                  {friend.unread_count > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center border border-[#0f172a]">
+                      {friend.unread_count > 99 ? '99+' : friend.unread_count}
+                    </span>
+                  )}
                 </button>
               </div>
             ))}
@@ -103,15 +108,21 @@ export default function SocialPanel({
                     <p className="text-xs text-green-400">● 線上</p>
                   </div>
                 </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    sendFriendRequest(player.id);
-                  }}
-                  className="px-3 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-sm rounded-lg transition-colors flex-shrink-0"
-                >
-                  加好友
-                </button>
+                {player.friendship_status === 'pending' ? (
+                  <span className="px-3 py-1 text-slate-500 text-sm flex-shrink-0 cursor-default">
+                    已申請
+                  </span>
+                ) : (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      sendFriendRequest(player.id);
+                    }}
+                    className="px-3 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-sm rounded-lg transition-colors flex-shrink-0"
+                  >
+                    加好友
+                  </button>
+                )}
               </div>
             ))}
           </div>

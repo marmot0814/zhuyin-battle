@@ -46,9 +46,9 @@ function Typewriter(props: { text: string; phoneticMap?: Record<string, string>;
   );
 }
 export default function LandingPage() {
-  const intro = '注音對戰！與世界各地玩家一較高下，成為注音大師！';
+  const intro = '精靈語對戰！與世界各地玩家一較高下，成為精靈語大師！';
   const phoneticMap: Record<string, string> = {
-    '注': 'ㄓㄨˋ', '音': 'ㄧㄣ', '對': 'ㄉㄨㄟˋ', '戰': 'ㄓㄢˋ', '與': 'ㄩˇ',
+    '精': 'ㄐˋ', '靈': 'ㄌㄧㄥˊ', '語': 'ㄩˇ', '對': 'ㄉㄨㄟˋ', '戰': 'ㄓㄢˋ', '與': 'ㄩˇ',
     '世': 'ㄕˋ', '界': 'ㄐㄧㄝˋ', '各': 'ㄍㄜˋ', '地': 'ㄉㄧˋ', '玩': 'ㄨㄢˊ',
     '家': 'ㄐㄧㄚ', '一': 'ㄧ', '較': 'ㄐㄧㄠˋ', '高': 'ㄍㄠ', '下': 'ㄒㄧㄚˋ',
     '成': 'ㄔㄥˊ', '為': 'ㄨㄟˊ', '大': 'ㄉㄚˋ', '師': 'ㄕ',
@@ -85,6 +85,16 @@ export default function LandingPage() {
         });
 
         const data = await res.json();
+
+        if (res.status === 403 && data.error === 'Account banned') {
+          const params = new URLSearchParams({
+            reason: data.reason || 'No reason provided',
+            until: data.bannedUntil
+          });
+          router.replace(`/banned?${params.toString()}`);
+          return;
+        }
+
         if (data.needsCharacterCreation) {
           // 新用戶，導航到角色創造頁面
           localStorage.setItem('pendingEmail', data.email);

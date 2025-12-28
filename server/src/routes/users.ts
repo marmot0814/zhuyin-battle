@@ -8,7 +8,7 @@ const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 // Middleware to verify JWT token
-export function verifyToken(req: Request, res: Response, next: Function) {
+export async function verifyToken(req: Request, res: Response, next: Function) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) {
     return res.status(401).json({ error: 'No token provided' });
@@ -16,6 +16,20 @@ export function verifyToken(req: Request, res: Response, next: Function) {
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as { userId: number };
     (req as any).userId = decoded.userId;
+
+    // Check if user is banned
+    const userRes = await query('SELECT banned_until, ban_reason FROM users WHERE id = $1', [decoded.userId]);
+    if (userRes.rows.length > 0) {
+      const user = userRes.rows[0];
+      if (user.banned_until && new Date(user.banned_until) > new Date()) {
+        return res.status(403).json({ 
+          error: 'Account banned', 
+          bannedUntil: user.banned_until,
+          reason: user.ban_reason 
+        });
+      }
+    }
+
     next();
   } catch (err) {
     res.status(401).json({ error: 'Invalid token' });
@@ -120,6 +134,15 @@ router.post('/login', async (req: Request, res: Response) => {
     const isValid = await UserModel.verifyPassword(user.id, password);
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Check if user is banned
+    if (user.banned_until && new Date(user.banned_until) > new Date()) {
+      return res.status(403).json({ 
+        error: 'Account banned', 
+        bannedUntil: user.banned_until,
+        reason: user.ban_reason 
+      });
     }
 
     // 更新 last_ping 時間（登入時）
@@ -236,6 +259,15 @@ router.post('/google-login', async (req: Request, res: Response) => {
       // 新用戶，需要進行角色創造
       res.json({ needsCharacterCreation: true, email });
     } else {
+      // Check if user is banned
+      if (user.banned_until && new Date(user.banned_until) > new Date()) {
+        return res.status(403).json({ 
+          error: 'Account banned', 
+          bannedUntil: user.banned_until,
+          reason: user.ban_reason 
+        });
+      }
+
       // 現有用戶，直接登入
       const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
       res.json({ user, token });

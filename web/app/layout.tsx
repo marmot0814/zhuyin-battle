@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "注音對戰",
-  description: "與世界各地玩家一較高下，成為注音大師！",
+  title: "精靈語對戰",
+  description: "與世界各地玩家一較高下，成為精靈語大師！",
 };
 
 export default function RootLayout({

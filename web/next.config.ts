@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_API_URL: 'https://zhuyin-battle.marmot0814.com',
     NEXT_PUBLIC_GOOGLE_CLIENT_ID: '666977153196-esbi7r0o0flbv82mrjn87m0m29so5chl.apps.googleusercontent.com',
+    NEXT_PUBLIC_BASE_PATH: '/zhuyin-battle',
   },
   // 暫時跳過動態路由頁面
   // 等到實際需要使用時再處理

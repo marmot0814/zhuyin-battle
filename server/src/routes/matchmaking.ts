@@ -1,16 +1,15 @@
 import express, { Request, Response } from 'express';
 import { query } from '../db';
-import jwt from 'jsonwebtoken';
+import { verifyToken } from './users';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 // 匹配隊列
 interface QueuePlayer {
   userId: number;
   username: string;
   rating: number;
-  mode: 'ranked' | 'casual';
+  mode: 'ranked' | 'casual' | 'ranked_rts' | 'casual_rts';
   timestamp: number;
 }
 
@@ -77,25 +76,8 @@ function processQueue() {
 }
 
 // 驗證 JWT middleware
-function authenticateToken(req: any, res: Response, next: Function) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ error: 'No token provided' });
-  }
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: number };
-    req.userId = decoded.userId;
-    next();
-  } catch (error) {
-    return res.status(403).json({ error: 'Invalid token' });
-  }
-}
-
 // 加入匹配隊列
-router.post('/queue/join', authenticateToken, async (req: any, res: Response) => {
+router.post('/queue/join', verifyToken, async (req: any, res: Response) => {
   try {
     const { mode } = req.body; // 'ranked' or 'casual'
     const userId = req.userId;
@@ -106,19 +88,55 @@ router.post('/queue/join', authenticateToken, async (req: any, res: Response) =>
       return res.status(400).json({ error: 'Already in queue' });
     }
 
+    // Check for existing active battles of the same type (Turn-based or RTS)
+    // User can only have ONE Ranked or Casual game of a specific type at a time.
+    // Custom games do not count towards this limit.
+    const activeBattles = await query(
+      `SELECT mode FROM battles 
+       WHERE (player1_id = $1 OR player2_id = $1)
+       AND status IN ('waiting', 'playing', 'in_progress')`,
+      [userId]
+    );
+
+    const isRtsRequest = mode.includes('rts');
+    
+    const hasConflictingBattle = activeBattles.rows.some((b: any) => {
+      const battleMode = b.mode;
+      const isRtsBattle = battleMode.includes('rts');
+      const isRankedOrCasual = battleMode.startsWith('ranked') || battleMode.startsWith('casual');
+      
+      // Custom games don't block new games
+      if (!isRankedOrCasual) return false;
+      
+      // Block if same type (RTS vs Turn-based)
+      return isRtsBattle === isRtsRequest;
+    });
+
+    if (hasConflictingBattle) {
+      return res.status(400).json({ error: '您已經在進行一場同類型的積分或一般對戰' });
+    }
+
     // 獲取用戶信息
-    const userResult = await query('SELECT username, rating FROM users WHERE id = $1', [userId]);
+    const userResult = await query('SELECT username, rating, rts_rating FROM users WHERE id = $1', [userId]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
     const user = userResult.rows[0];
+    let rating = user.rating;
+    
+    if (mode === 'ranked_rts' || mode === 'casual_rts') {
+      rating = user.rts_rating;
+    }
+
+    // Default to 1200 if null (placement matches)
+    if (rating === null) rating = 1200;
 
     // 加入隊列
     const player: QueuePlayer = {
       userId,
       username: user.username,
-      rating: user.rating,
+      rating: rating,
       mode,
       timestamp: Date.now()
     };
@@ -136,7 +154,7 @@ router.post('/queue/join', authenticateToken, async (req: any, res: Response) =>
 });
 
 // 離開匹配隊列
-router.post('/queue/leave', authenticateToken, async (req: any, res: Response) => {
+router.post('/queue/leave', verifyToken, async (req: any, res: Response) => {
   try {
     const userId = req.userId;
     const index = matchQueue.findIndex(p => p.userId === userId);
@@ -154,7 +172,7 @@ router.post('/queue/leave', authenticateToken, async (req: any, res: Response) =
 });
 
 // 檢查匹配狀態
-router.get('/queue/status', authenticateToken, async (req: any, res: Response) => {
+router.get('/queue/status', verifyToken, async (req: any, res: Response) => {
   try {
     const userId = req.userId;
     const player = matchQueue.find(p => p.userId === userId);
@@ -213,7 +231,14 @@ async function createBattle(player1: QueuePlayer, player2: QueuePlayer, mode: st
   const battleId = result.rows[0].id;
   
   // Initialize game in memory
-  await gameManager.createGame(battleId, player1.userId, player2.userId, player1.username, player2.username, mode as 'ranked' | 'casual');
+  await gameManager.createGame(
+    battleId, 
+    player1.userId, 
+    player2.userId, 
+    player1.username, 
+    player2.username, 
+    mode as 'ranked' | 'casual' | 'ranked_rts' | 'casual_rts'
+  );
 
   return battleId;
 }

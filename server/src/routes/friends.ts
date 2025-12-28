@@ -15,8 +15,13 @@ router.get('/my-friends', verifyToken, async (req: Request, res: Response) => {
               u.ranked_games_played, u.ranked_games_won,
               u.casual_games_played, u.casual_games_won,
               u.custom_games_played, u.custom_games_won,
+              u.rts_rating,
+              u.rts_ranked_games_played, u.rts_ranked_games_won,
+              u.rts_casual_games_played, u.rts_casual_games_won,
+              u.rts_custom_games_played, u.rts_custom_games_won,
               u.last_ping,
-              EXTRACT(EPOCH FROM (NOW() - u.last_ping)) as seconds_offline
+              EXTRACT(EPOCH FROM (NOW() - u.last_ping)) as seconds_offline,
+              (SELECT COUNT(*)::int FROM messages m WHERE m.sender_id = u.id AND m.receiver_id = $1 AND m.is_read = FALSE) as unread_count
        FROM friends f
        JOIN users u ON (f.friend_id = u.id)
        WHERE f.user_id = $1 AND f.status = 'accepted'
@@ -27,6 +32,9 @@ router.get('/my-friends', verifyToken, async (req: Request, res: Response) => {
     const friends = result.rows.map(friend => {
       if (friend.ranked_games_played < 10) {
         friend.rating = null; // Mask rating for placement players
+      }
+      if (friend.rts_ranked_games_played < 10) {
+        friend.rts_rating = null; // Mask RTS rating for placement players
       }
       return friend;
     });
@@ -49,14 +57,23 @@ router.get('/online-users', verifyToken, async (req: Request, res: Response) => 
               u.ranked_games_played, u.ranked_games_won,
               u.casual_games_played, u.casual_games_won,
               u.custom_games_played, u.custom_games_won,
-              EXTRACT(EPOCH FROM (NOW() - u.last_ping)) as seconds_offline
+              u.rts_rating,
+              u.rts_ranked_games_played, u.rts_ranked_games_won,
+              u.rts_casual_games_played, u.rts_casual_games_won,
+              u.rts_custom_games_played, u.rts_custom_games_won,
+              EXTRACT(EPOCH FROM (NOW() - u.last_ping)) as seconds_offline,
+              (SELECT status FROM friends f 
+               WHERE (f.user_id = $1 AND f.friend_id = u.id) 
+                  OR (f.user_id = u.id AND f.friend_id = $1)
+               LIMIT 1) as friendship_status
        FROM users u
        WHERE u.id != $1
          AND u.last_ping > NOW() - INTERVAL '30 seconds'
          AND NOT EXISTS (
            SELECT 1 FROM friends f 
-           WHERE (f.user_id = $1 AND f.friend_id = u.id) 
-              OR (f.user_id = u.id AND f.friend_id = $1)
+           WHERE ((f.user_id = $1 AND f.friend_id = u.id) 
+              OR (f.user_id = u.id AND f.friend_id = $1))
+             AND f.status = 'accepted'
          )
        ORDER BY u.last_ping DESC
        LIMIT 20`,
@@ -67,6 +84,9 @@ router.get('/online-users', verifyToken, async (req: Request, res: Response) => 
       if (user.ranked_games_played < 10) {
         user.rating = null;
       }
+      if (user.rts_ranked_games_played < 10) {
+        user.rts_rating = null;
+      }
       return user;
     });
     
@@ -74,6 +94,25 @@ router.get('/online-users', verifyToken, async (req: Request, res: Response) => 
   } catch (error) {
     console.error('Get online users error:', error);
     res.status(500).json({ error: 'Failed to fetch online users' });
+  }
+});
+
+// 獲取未讀訊息總數
+router.get('/unread-messages', verifyToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    
+    const result = await query(
+      `SELECT COUNT(*)::int as count 
+       FROM messages 
+       WHERE receiver_id = $1 AND is_read = FALSE`,
+      [userId]
+    );
+    
+    res.json({ count: result.rows[0].count });
+  } catch (error) {
+    console.error('Get unread count error:', error);
+    res.status(500).json({ error: 'Failed to fetch unread count' });
   }
 });
 
@@ -88,6 +127,10 @@ router.get('/user/:userId', verifyToken, async (req: Request, res: Response) => 
               u.ranked_games_played, u.ranked_games_won,
               u.casual_games_played, u.casual_games_won,
               u.custom_games_played, u.custom_games_won,
+              u.rts_rating,
+              u.rts_ranked_games_played, u.rts_ranked_games_won,
+              u.rts_casual_games_played, u.rts_casual_games_won,
+              u.rts_custom_games_played, u.rts_custom_games_won,
               u.last_online,
               EXTRACT(EPOCH FROM (NOW() - u.last_ping)) as seconds_offline,
               EXISTS(SELECT 1 FROM friends WHERE user_id = $2 AND friend_id = $1 AND status = 'accepted') as is_friend
@@ -103,6 +146,9 @@ router.get('/user/:userId', verifyToken, async (req: Request, res: Response) => 
     const user = result.rows[0];
     if (user.ranked_games_played < 10) {
       user.rating = null;
+    }
+    if (user.rts_ranked_games_played < 10) {
+      user.rts_rating = null;
     }
     
     res.json(user);
@@ -310,7 +356,7 @@ router.get('/messages/:friendId', verifyToken, async (req: Request, res: Respons
     
     // 獲取雙向訊息
     const result = await query(
-      `SELECT m.id, m.sender_id, m.receiver_id, m.content, m.created_at,
+      `SELECT m.id, m.sender_id, m.receiver_id, m.content, m.is_read, m.is_recalled, m.created_at,
               u.username as sender_username, u.avatar_url as sender_avatar
        FROM messages m
        JOIN users u ON m.sender_id = u.id
@@ -325,6 +371,59 @@ router.get('/messages/:friendId', verifyToken, async (req: Request, res: Respons
   } catch (error) {
     console.error('Get messages error:', error);
     res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
+// 標記訊息為已讀
+router.post('/messages/:friendId/read', verifyToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const { friendId } = req.params;
+    
+    await query(
+      `UPDATE messages 
+       SET is_read = TRUE 
+       WHERE sender_id = $1 AND receiver_id = $2 AND is_read = FALSE`,
+      [friendId, userId]
+    );
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Mark messages read error:', error);
+    res.status(500).json({ error: 'Failed to mark messages as read' });
+  }
+});
+
+// 收回訊息
+router.post('/messages/:messageId/recall', verifyToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const { messageId } = req.params;
+    
+    // 檢查訊息是否屬於該用戶
+    const msgCheck = await query(
+      `SELECT sender_id FROM messages WHERE id = $1`,
+      [messageId]
+    );
+    
+    if (msgCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+    
+    if (msgCheck.rows[0].sender_id !== userId) {
+      return res.status(403).json({ error: 'Can only recall your own messages' });
+    }
+    
+    // 標記為已收回
+    await query(
+      `UPDATE messages SET is_recalled = TRUE, content = '' WHERE id = $1`,
+      [messageId]
+    );
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Recall message error:', error);
+    res.status(500).json({ error: 'Failed to recall message' });
   }
 });
 
@@ -350,6 +449,7 @@ router.post('/invite-battle/:friendId', verifyToken, async (req: Request, res: R
   try {
     const userId = (req as any).userId;
     const { friendId } = req.params;
+    const { settings } = req.body;
     
     // Check if friend
     const friendCheck = await query(
@@ -375,8 +475,8 @@ router.post('/invite-battle/:friendId', verifyToken, async (req: Request, res: R
     }
 
     await query(
-      `INSERT INTO battle_invites (sender_id, receiver_id) VALUES ($1, $2)`,
-      [userId, friendId]
+      `INSERT INTO battle_invites (sender_id, receiver_id, settings) VALUES ($1, $2, $3)`,
+      [userId, friendId, settings || {}]
     );
 
     res.json({ message: 'Battle invite sent' });
@@ -425,6 +525,8 @@ router.post('/accept-battle-invite/:inviteId', verifyToken, async (req: Request,
     
     const invite = inviteRes.rows[0];
     const senderId = invite.sender_id;
+    const settings = invite.settings || {};
+    const mode = settings.mode === 'rts' ? 'custom_rts' : 'custom';
     
     // Update invite status
     await query(`UPDATE battle_invites SET status = 'accepted' WHERE id = $1`, [inviteId]);
@@ -432,9 +534,9 @@ router.post('/accept-battle-invite/:inviteId', verifyToken, async (req: Request,
     // Create Battle
     const battleRes = await query(
       `INSERT INTO battles (player1_id, player2_id, mode, status) 
-       VALUES ($1, $2, 'custom', 'in_progress') 
+       VALUES ($1, $2, $3, 'in_progress') 
        RETURNING id`,
-      [senderId, userId]
+      [senderId, userId, mode]
     );
     
     const battleId = battleRes.rows[0].id; // UUID
@@ -455,7 +557,8 @@ router.post('/accept-battle-invite/:inviteId', verifyToken, async (req: Request,
       userId, 
       p1.username, 
       p2.username, 
-      'custom'
+      mode,
+      settings
     );
     
     res.json({ battleId });

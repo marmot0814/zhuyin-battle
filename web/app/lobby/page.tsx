@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '../../lib/api';
 import { AVATAR_OPTIONS } from '../../lib/utils';
@@ -16,9 +16,14 @@ import FriendRequestsModal from './components/FriendRequestsModal';
 import ChatWindow from './components/ChatWindow';
 import MatchmakingOverlay from './components/MatchmakingOverlay';
 import RankDistributionModal from './components/RankDistributionModal';
+import TutorialModal from './components/TutorialModal';
+import BattleSettingsModal, { BattleSettings } from './components/BattleSettingsModal';
+import ConfirmModal from '../components/ConfirmModal';
+import { useNotification } from '../../hooks/useNotification';
 
 export default function LobbyPage() {
   const router = useRouter();
+  const { playSound, updateTitle, notificationCount } = useNotification();
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
   
@@ -29,26 +34,46 @@ export default function LobbyPage() {
   const [showFriendRequests, setShowFriendRequests] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [showBattleSettings, setShowBattleSettings] = useState(false);
   
   // Data States
   const [friends, setFriends] = useState<any[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<any[]>([]);
   const [friendRequests, setFriendRequests] = useState<any[]>([]);
   const [battleInvites, setBattleInvites] = useState<any[]>([]);
+  const [toast, setToast] = useState<string | null>(null);
+  const friendsRef = useRef<any[]>([]);
+  const friendRequestsRef = useRef<any[]>([]);
+  const battleInvitesRef = useRef<any[]>([]);
   
   // Selection States
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [chatFriend, setChatFriend] = useState<any>(null);
+  const [challengeTarget, setChallengeTarget] = useState<any>(null);
   
   // Matchmaking States
   const [isMatching, setIsMatching] = useState(false);
-  const [matchMode, setMatchMode] = useState<'ranked' | 'casual' | null>(null);
+  const [matchMode, setMatchMode] = useState<'ranked' | 'casual' | 'ranked_rts' | 'casual_rts' | null>(null);
   const [matchStatus, setMatchStatus] = useState<'waiting' | 'matched' | null>(null);
   const [matchedBattleId, setMatchedBattleId] = useState<number | null>(null);
   const [opponent, setOpponent] = useState<any>(null);
 
   // Derived State
   const currentAvatar = user?.avatar_url || AVATAR_OPTIONS[0];
+
+  useEffect(() => {
+    friendsRef.current = friends;
+    friendRequestsRef.current = friendRequests;
+    battleInvitesRef.current = battleInvites;
+  }, [friends, friendRequests, battleInvites]);
+
+  // Confirm Modal State
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<() => void>(() => {});
+  const [confirmMessage, setConfirmMessage] = useState('');
+  const [confirmTitle, setConfirmTitle] = useState('');
+  const [isDangerousAction, setIsDangerousAction] = useState(false);
 
   // 檢查登入狀態並獲取最新資料
   useEffect(() => {
@@ -107,26 +132,93 @@ export default function LobbyPage() {
           api('/api/friends/battle-invites')
         ]);
         
-        if (friendsRes.ok) setFriends(await friendsRes.json());
+        if (friendsRes.ok) {
+          const friendsData = await friendsRes.json();
+          
+          // Check for new messages
+          const oldFriends = friendsRef.current;
+          const oldUnreadMap = new Map(oldFriends.map(f => [f.id, f.unread_count || 0]));
+          
+          let hasNewMessage = false;
+          friendsData.forEach((f: any) => {
+            const old = oldUnreadMap.get(f.id) || 0;
+            const current = f.unread_count || 0;
+            if (current > old) {
+              setToast(`收到來自 ${f.username} 的新訊息`);
+              setTimeout(() => setToast(null), 3000);
+              hasNewMessage = true;
+            }
+          });
+
+          if (hasNewMessage) {
+            playSound();
+            updateTitle(notificationCount + 1);
+          }
+
+          setFriends(friendsData);
+        }
         if (usersRes.ok) setOnlineUsers(await usersRes.json());
-        if (requestsRes.ok) setFriendRequests(await requestsRes.json());
-        if (invitesRes.ok) setBattleInvites(await invitesRes.json());
+        
+        if (requestsRes.ok) {
+          const newRequests = await requestsRes.json();
+          if (newRequests.length > friendRequestsRef.current.length) {
+            playSound();
+            updateTitle(notificationCount + (newRequests.length - friendRequestsRef.current.length));
+            setToast(`收到新的好友邀請`);
+            setTimeout(() => setToast(null), 3000);
+          }
+          setFriendRequests(newRequests);
+        }
+        
+        if (invitesRes.ok) {
+          const newInvites = await invitesRes.json();
+          if (newInvites.length > battleInvitesRef.current.length) {
+            playSound();
+            updateTitle(notificationCount + (newInvites.length - battleInvitesRef.current.length));
+            setToast(`收到新的對戰邀請`);
+            setTimeout(() => setToast(null), 3000);
+          }
+          setBattleInvites(newInvites);
+        }
       } catch (error) {
         console.error('Failed to load friends and users:', error);
       }
     }
     
     loadFriendsAndUsers();
-    const interval = setInterval(loadFriendsAndUsers, 30000);
+    const interval = setInterval(loadFriendsAndUsers, 5000);
     return () => clearInterval(interval);
   }, [user]);
 
   // Handlers
-  async function handleChallenge(userId: number) {
+  function handleChallenge(userId: number) {
+    const target = friends.find(f => f.id === userId) || 
+                   onlineUsers.find(u => u.id === userId) || 
+                   (selectedUser && selectedUser.id === userId ? selectedUser : null);
+                   
+    if (target) {
+        setChallengeTarget(target);
+        setShowBattleSettings(true);
+    } else {
+        // Fallback
+        setChallengeTarget({ id: userId, username: 'Unknown' });
+        setShowBattleSettings(true);
+    }
+  }
+
+  async function sendChallenge(settings: BattleSettings) {
+    if (!challengeTarget) return;
+    
     try {
-      const res = await api(`/api/friends/invite-battle/${userId}`, { method: 'POST' });
+      const res = await api(`/api/friends/invite-battle/${challengeTarget.id}`, { 
+        method: 'POST',
+        body: JSON.stringify({ settings })
+      });
+      
       if (res.ok) {
         alert('已發送約戰邀請！');
+        setShowBattleSettings(false);
+        setChallengeTarget(null);
       } else {
         const data = await res.json();
         alert(data.error || '發送邀請失敗');
@@ -242,20 +334,27 @@ export default function LobbyPage() {
   }
 
   async function removeFriend(friendId: number) {
-    if (!confirm('確定要刪除這位好友嗎？')) return;
-    try {
-      const res = await api(`/api/friends/remove-friend/${friendId}`, { method: 'DELETE' });
-      if (res.ok) {
-        const friendsRes = await api('/api/friends/my-friends');
-        if (friendsRes.ok) setFriends(await friendsRes.json());
-        if (chatFriend && chatFriend.id === friendId) {
-          setShowChat(false);
-          setChatFriend(null);
+    setConfirmTitle('刪除好友');
+    setConfirmMessage('確定要刪除這位好友嗎？');
+    setIsDangerousAction(true);
+    setConfirmAction(() => async () => {
+      try {
+        const res = await api(`/api/friends/remove-friend/${friendId}`, { method: 'DELETE' });
+        if (res.ok) {
+          const friendsRes = await api('/api/friends/my-friends');
+          if (friendsRes.ok) setFriends(await friendsRes.json());
+          if (chatFriend && chatFriend.id === friendId) {
+            setShowChat(false);
+            setChatFriend(null);
+          }
         }
+      } catch (error) {
+        console.error('Failed to remove friend:', error);
+      } finally {
+        setShowConfirm(false);
       }
-    } catch (error) {
-      console.error('Failed to remove friend:', error);
-    }
+    });
+    setShowConfirm(true);
   }
 
   function openChat(friend: any) {
@@ -264,7 +363,7 @@ export default function LobbyPage() {
   }
 
   // Matchmaking Logic
-  async function startMatching(mode: 'ranked' | 'casual') {
+  async function startMatching(mode: 'ranked' | 'casual' | 'ranked_rts' | 'casual_rts') {
     try {
       setIsMatching(true);
       setMatchMode(mode);
@@ -360,12 +459,19 @@ export default function LobbyPage() {
 
   return (
     <div className="flex flex-col h-screen bg-[#0f172a] text-slate-200 overflow-hidden">
+      {toast && (
+        <div className="fixed top-20 right-4 z-50 bg-indigo-600 text-white px-6 py-3 rounded-lg shadow-lg animate-in slide-in-from-right duration-300 flex items-center gap-2">
+          <span>💬</span>
+          {toast}
+        </div>
+      )}
       <Navbar 
         friendRequestsCount={friendRequests.length + battleInvites.length}
         showFriendRequests={showFriendRequests}
         setShowFriendRequests={setShowFriendRequests}
         handleLogout={handleLogout}
         onOpenLeaderboard={() => setShowLeaderboard(true)}
+        onOpenTutorial={() => setShowTutorial(true)}
       />
 
       <main className="flex flex-1 overflow-hidden">
@@ -442,6 +548,27 @@ export default function LobbyPage() {
       <RankDistributionModal 
         show={showLeaderboard}
         onClose={() => setShowLeaderboard(false)}
+      />
+
+      <TutorialModal 
+        show={showTutorial}
+        onClose={() => setShowTutorial(false)}
+      />
+
+      <BattleSettingsModal
+        show={showBattleSettings}
+        onClose={() => setShowBattleSettings(false)}
+        onConfirm={sendChallenge}
+        friendName={challengeTarget?.username || 'Friend'}
+      />
+      {/* Confirm Modal */}
+      <ConfirmModal
+        isOpen={showConfirm}
+        title={confirmTitle}
+        message={confirmMessage}
+        onConfirm={confirmAction}
+        onCancel={() => setShowConfirm(false)}
+        isDangerous={isDangerousAction}
       />
     </div>
   );

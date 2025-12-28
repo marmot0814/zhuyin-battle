@@ -3,20 +3,100 @@
 import React, { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "../../lib/api";
+import { useNotification } from "../../hooks/useNotification";
+import ConfirmModal from "../components/ConfirmModal";
+
+const HexTile = React.memo(({ tile, isHovered, isSelected, onMouseEnter, onMouseLeave, onClick }: {
+  tile: { state: string; phonetic?: string };
+  isHovered: boolean;
+  isSelected: boolean;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+  onClick: () => void;
+}) => {
+  const [animate, setAnimate] = useState(false);
+  const prevTile = useRef(tile);
+
+  useEffect(() => {
+    if (prevTile.current.state !== tile.state || prevTile.current.phonetic !== tile.phonetic) {
+      setAnimate(true);
+      const timer = setTimeout(() => setAnimate(false), 300);
+      return () => clearTimeout(timer);
+    }
+    prevTile.current = tile;
+  }, [tile.state, tile.phonetic]);
+
+  const tileState = tile.state;
+  
+  let background = 'linear-gradient(180deg, #cbd5e1 0%, #94a3b8 100%)';
+  if (tileState === 'red_castle' || tileState === 'red_territory') {
+    background = 'linear-gradient(180deg,#fca5a5,#ef4444)';
+  } else if (tileState === 'blue_castle' || tileState === 'blue_territory') {
+    background = 'linear-gradient(180deg,#93c5fd,#3b82f6)';
+  }
+  if (isSelected) {
+    background = 'linear-gradient(180deg, #fbbf24, #d97706)';
+  }
+
+  return (
+    <div
+      role="button"
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onClick={onClick}
+      className={`hex-tile relative transition-all duration-500 cursor-pointer ${animate ? 'z-10' : (isSelected ? 'z-10' : 'z-0')}`}
+      style={{
+        width: 'var(--hex-size)',
+        paddingBottom: 'calc(var(--hex-size) * 1.1547)',
+        marginLeft: 'calc(var(--hex-size) * 0.05)',
+        clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)',
+        background: background,
+        boxShadow: isHovered || isSelected
+          ? '0 12px 24px rgba(2,6,23,0.3), inset 0 8px 16px rgba(255,255,255,0.12)'
+          : '0 4px 8px rgba(2,6,23,0.08), inset 0 4px 8px rgba(255,255,255,0.04)',
+        filter: isHovered ? 'brightness(1.15)' : 'brightness(1)',
+        transform: animate ? 'scale(1.1)' : 'scale(1)',
+      }}
+    >
+      <div className="absolute inset-0 border border-slate-200/60"></div>
+
+      {(tileState === 'red_castle' || tileState === 'blue_castle') ? (
+        <div className="absolute inset-0 flex items-center justify-center z-30 animate-in zoom-in duration-300">
+          <span style={{ fontSize: 30, lineHeight: 1 }}>{'🏰'}</span>
+        </div>
+      ) : (tileState === 'white_phonetic' && tile.phonetic) ? (
+        <div key={tile.phonetic} className="absolute inset-0 flex items-center justify-center z-30 animate-in zoom-in duration-300">
+          <div
+            style={{
+              fontSize: 30,
+              color: '#0f172a',
+              fontWeight: 700,
+            }}
+          >
+            {tile.phonetic}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+});
 
 function BattlePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const id = searchParams.get('id');
+  const { playSound, updateTitle, notificationCount } = useNotification();
 
   const ROWS = 8;
   const COLS = 8;
 
   const [gameState, setGameState] = useState<any>(null);
+  const prevTurnRef = useRef<number | null>(null);
   const [selectedSequence, setSelectedSequence] = useState<Array<{r: number, c: number, phonetic: string}>>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [gameOverState, setGameOverState] = useState<{ winnerName: string, isWinner: boolean } | null>(null);
+  const [showSurrenderModal, setShowSurrenderModal] = useState(false);
 
   const [hoveredHex, setHoveredHex] = useState<string | null>(null);
 
@@ -30,6 +110,28 @@ function BattlePageContent() {
 
   const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
+  const formatTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  async function handleUseSkill() {
+    if (!gameState || !gameState.isMyTurn) return;
+    try {
+      const res = await api(`/api/game/${id}/skill`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json();
+        setErrorMsg(data.error);
+        setTimeout(() => setErrorMsg(null), 3000);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   // Polling Game State
   useEffect(() => {
     if (!id) return;
@@ -40,6 +142,16 @@ function BattlePageContent() {
         if (res.ok) {
           const data = await res.json();
           setGameState(data);
+
+          // Turn notification
+          if (data.turn !== prevTurnRef.current) {
+            if (data.isMyTurn && !document.hasFocus()) {
+              playSound();
+              updateTitle(notificationCount + 1);
+            }
+            prevTurnRef.current = data.turn;
+          }
+
           if (data.status === 'finished' && !gameOverState) {
             // Handle game over
             const winnerName = data.winner === data.player1Id ? data.player1Name : data.player2Name;
@@ -74,15 +186,8 @@ function BattlePageContent() {
             // So `myId` = `isMyTurn ? turn : (turn === p1 ? p2 : p1)`.
             // This is reliable if I am a player.
             
-            let myId = -1;
-            if (data.isMyTurn) {
-                myId = data.turn;
-            } else {
-                // If it's not my turn, I am the other player.
-                myId = data.turn === data.player1Id ? data.player2Id : data.player1Id;
-            }
-            
-            const amIWinner = data.winner === myId;
+            // Use currentUserId returned from API to determine if I won
+            const amIWinner = data.winner === data.currentUserId;
             
             setGameOverState({
                 winnerName: winnerName,
@@ -196,6 +301,53 @@ function BattlePageContent() {
     setSelectedSequence([]);
   }
 
+  async function handleSurrender() {
+    setShowSurrenderModal(false);
+    try {
+      await api(`/api/game/${id}/surrender`, { method: 'POST' });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function handleRequestTimeout() {
+    try {
+      await api(`/api/game/${id}/timeout/request`, { method: 'POST' });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function handleRespondTimeout(accept: boolean) {
+    try {
+      await api(`/api/game/${id}/timeout/respond`, { 
+        method: 'POST',
+        body: JSON.stringify({ accept })
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function handleRequestResume() {
+    try {
+      await api(`/api/game/${id}/resume/request`, { method: 'POST' });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function handleRespondResume(accept: boolean) {
+    try {
+      await api(`/api/game/${id}/resume/respond`, { 
+        method: 'POST',
+        body: JSON.stringify({ accept })
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   async function handleSubmit() {
     if (selectedSequence.length === 0) return;
     setIsSubmitting(true);
@@ -291,6 +443,40 @@ function BattlePageContent() {
           </div>
         )}
 
+        {/* Skill UI */}
+        {gameState && (
+          <div className="absolute bottom-8 left-8 z-50 flex flex-col items-center gap-2">
+            <div className="relative group">
+              <button
+                onClick={handleUseSkill}
+                disabled={!gameState.isMyTurn || (gameState.skillInventory?.[gameState.currentUserId] || 0) < 1}
+                className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl shadow-lg transition-all transform active:scale-95 border-4 ${
+                  (gameState.skillInventory?.[gameState.currentUserId] || 0) > 0
+                    ? 'bg-purple-600 hover:bg-purple-500 border-purple-400 text-white cursor-pointer animate-pulse'
+                    : 'bg-slate-800 border-slate-600 text-slate-500 cursor-not-allowed'
+                }`}
+                title="Shuffle Board (Cost: 1 Skill Item)"
+              >
+                🎲
+              </button>
+              <div className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center border-2 border-slate-900">
+                {gameState.skillInventory?.[gameState.currentUserId] || 0}
+              </div>
+            </div>
+            
+            {/* Charge Bar */}
+            <div className="w-20 h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+              <div 
+                className="h-full bg-yellow-400 transition-all duration-500"
+                style={{ width: `${((gameState.skillCharges?.[gameState.currentUserId] || 0) / 3) * 100}%` }}
+              />
+            </div>
+            <div className="text-xs text-slate-400 font-mono bg-slate-900/50 px-2 py-1 rounded">
+              Charge: {gameState.skillCharges?.[gameState.currentUserId] || 0}/3
+            </div>
+          </div>
+        )}
+
         <div
           className="hex-map h-full overflow-hidden"
           ref={containerRef}
@@ -318,44 +504,16 @@ function BattlePageContent() {
                   const isHovered = hoveredHex === idx;
                   const isSelected = selectedSequence.some(s => s.r === r && s.c === c);
                   
-                  let bg = 'linear-gradient(180deg, #cbd5e1 0%, #94a3b8 100%)'; // Default neutral
-                  if (tile.state === 'red_castle' || tile.state === 'red_territory') bg = 'linear-gradient(180deg,#fca5a5,#ef4444)';
-                  if (tile.state === 'blue_castle' || tile.state === 'blue_territory') bg = 'linear-gradient(180deg,#93c5fd,#3b82f6)';
-                  if (isSelected) bg = 'linear-gradient(180deg, #fbbf24, #d97706)'; // Amber for selection
-
                   return (
-                    <div
+                    <HexTile
                       key={idx}
-                      role="button"
+                      tile={tile}
+                      isHovered={isHovered}
+                      isSelected={isSelected}
                       onMouseEnter={() => setHoveredHex(idx)}
                       onMouseLeave={() => setHoveredHex(null)}
                       onClick={() => handleTileClick(r, c, tile.phonetic)}
-                      className="hex-tile relative transition-all duration-150 cursor-pointer"
-                      style={{
-                        width: 'var(--hex-size)',
-                        paddingBottom: 'calc(var(--hex-size) * 1.1547)',
-                        marginLeft: 'calc(var(--hex-size) * 0.05)',
-                        clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)',
-                        background: bg,
-                        boxShadow: isHovered || isSelected
-                          ? '0 12px 24px rgba(2,6,23,0.3), inset 0 8px 16px rgba(255,255,255,0.12)'
-                          : '0 4px 8px rgba(2,6,23,0.08), inset 0 4px 8px rgba(255,255,255,0.04)',
-                        filter: isHovered ? 'brightness(1.15)' : 'brightness(1)',
-                        zIndex: isSelected ? 10 : 1
-                      }}
-                    >
-                      <div className="absolute inset-0 border border-slate-200/60"></div>
-
-                      {tile.state.includes('castle') ? (
-                        <div className="absolute inset-0 flex items-center justify-center z-30 text-3xl">
-                          🏰
-                        </div>
-                      ) : tile.phonetic ? (
-                        <div className="absolute inset-0 flex items-center justify-center z-30 text-2xl font-bold text-slate-900">
-                          {tile.phonetic}
-                        </div>
-                      ) : null}
-                    </div>
+                    />
                   );
                 })}
               </div>
@@ -368,7 +526,7 @@ function BattlePageContent() {
       <aside className="w-96 h-screen bg-[#0b1422] border-l border-slate-800 p-6 flex flex-col">
         <div className="flex items-center justify-between mb-6">
           <h3 className="font-bold text-xl text-white">
-            {gameState.gameMode === 'ranked' ? '積分對戰' : '一般對戰'}
+            {gameState.gameMode === 'ranked' ? '積分對戰' : (gameState.gameMode === 'ranked_rts' ? '即時戰略 (RTS)' : '一般對戰')}
           </h3>
           <button onClick={() => router.push('/lobby')} className="text-sm text-slate-400 hover:text-white">離開</button>
         </div>
@@ -379,32 +537,40 @@ function BattlePageContent() {
           <div className={`p-4 rounded-xl border transition-all ${gameState.turn === gameState.player1Id ? 'bg-red-900/20 border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.3)]' : 'bg-slate-800/50 border-slate-700'}`}>
             <div className="flex justify-between items-center mb-2">
               <span className="font-bold text-red-400">{gameState.player1Name || 'Player 1'}</span>
-              <span className={`text-2xl font-mono font-bold ${gameState.timer[gameState.player1Id] < 30 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
-                {gameState.timer[gameState.player1Id]}s
-              </span>
+              {gameState.gameMode !== 'ranked_rts' && (
+                <span className={`text-2xl font-mono font-bold ${gameState.timer[gameState.player1Id] < 30 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
+                  {formatTime(gameState.timer[gameState.player1Id])}
+                </span>
+              )}
             </div>
-            <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-red-500 transition-all duration-1000" 
-                style={{ width: `${(gameState.timer[gameState.player1Id] / 120) * 100}%` }}
-              ></div>
-            </div>
+            {gameState.gameMode !== 'ranked_rts' && (
+              <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-red-500 transition-all duration-1000" 
+                  style={{ width: `${Math.min((gameState.timer[gameState.player1Id] / 7200) * 100, 100)}%` }}
+                ></div>
+              </div>
+            )}
           </div>
 
           {/* Player 2 (Blue) */}
           <div className={`p-4 rounded-xl border transition-all ${gameState.turn === gameState.player2Id ? 'bg-blue-900/20 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : 'bg-slate-800/50 border-slate-700'}`}>
             <div className="flex justify-between items-center mb-2">
               <span className="font-bold text-blue-400">{gameState.player2Name || 'Player 2'}</span>
-              <span className={`text-2xl font-mono font-bold ${gameState.timer[gameState.player2Id] < 30 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
-                {gameState.timer[gameState.player2Id]}s
-              </span>
+              {gameState.gameMode !== 'ranked_rts' && (
+                <span className={`text-2xl font-mono font-bold ${gameState.timer[gameState.player2Id] < 30 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
+                  {formatTime(gameState.timer[gameState.player2Id])}
+                </span>
+              )}
             </div>
-            <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-blue-500 transition-all duration-1000" 
-                style={{ width: `${(gameState.timer[gameState.player2Id] / 120) * 100}%` }}
-              ></div>
-            </div>
+            {gameState.gameMode !== 'ranked_rts' && (
+              <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-blue-500 transition-all duration-1000" 
+                  style={{ width: `${Math.min((gameState.timer[gameState.player2Id] / 7200) * 100, 100)}%` }}
+                ></div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -443,6 +609,22 @@ function BattlePageContent() {
           >
             {isSubmitting ? '驗證中...' : gameState.isMyTurn ? '確認送出 (Enter)' : '等待對手行動...'}
           </button>
+
+          <div className="grid grid-cols-2 gap-3 mt-3">
+             <button
+               onClick={() => setShowSurrenderModal(true)}
+               className="bg-slate-800 hover:bg-red-900/30 text-slate-400 hover:text-red-400 py-2 rounded-lg text-sm font-medium transition-colors border border-slate-700 hover:border-red-900"
+             >
+               🏳️ 投降
+             </button>
+             <button
+               onClick={handleRequestTimeout}
+               disabled={!!gameState.pauseRequest || gameState.status === 'paused'}
+               className="bg-slate-800 hover:bg-yellow-900/30 text-slate-400 hover:text-yellow-400 py-2 rounded-lg text-sm font-medium transition-colors border border-slate-700 hover:border-yellow-900 disabled:opacity-50"
+             >
+               ⏸️ 暫停
+             </button>
+          </div>
         </div>
 
         {/* 遊戲日誌 */}
@@ -454,6 +636,72 @@ function BattlePageContent() {
           ))}
         </div>
       </aside>
+
+      {/* Modals & Overlays */}
+      <ConfirmModal
+        isOpen={showSurrenderModal}
+        title="確認投降"
+        message="確定要投降嗎？這將視為您輸掉這場比賽。"
+        onConfirm={handleSurrender}
+        onCancel={() => setShowSurrenderModal(false)}
+        confirmText="投降"
+        cancelText="取消"
+        isDangerous={true}
+      />
+
+      {/* Pause Request Modal (Receiver) */}
+      {gameState.pauseRequest && gameState.pauseRequest.requesterId !== gameState.currentUserId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-2xl max-w-sm w-full text-center animate-in zoom-in duration-200">
+            <h3 className="text-xl font-bold text-white mb-4">對手請求暫停</h3>
+            <p className="text-slate-400 mb-6">是否同意暫停遊戲？</p>
+            <div className="flex gap-3 justify-center">
+              <button onClick={() => handleRespondTimeout(false)} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-white transition-colors">拒絕</button>
+              <button onClick={() => handleRespondTimeout(true)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white transition-colors">同意</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pause Request Pending (Sender) */}
+      {gameState.pauseRequest && gameState.pauseRequest.requesterId === gameState.currentUserId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-2xl max-w-sm w-full text-center animate-in zoom-in duration-200">
+            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500 mx-auto mb-4"></div>
+            <h3 className="text-xl font-bold text-white mb-2">等待對手回應...</h3>
+            <p className="text-slate-400">已發送暫停請求</p>
+          </div>
+        </div>
+      )}
+
+      {/* Paused Overlay */}
+      {gameState.status === 'paused' && (
+        <div className="absolute inset-0 z-[55] bg-slate-900 flex flex-col items-center justify-center animate-in fade-in duration-300">
+          <h2 className="text-4xl font-bold text-white mb-4">遊戲暫停中</h2>
+          <p className="text-slate-400 mb-8">雙方同意暫停，畫面已遮蔽</p>
+          
+          {gameState.resumeRequest ? (
+             gameState.resumeRequest.requesterId !== gameState.currentUserId ? (
+                <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-2xl max-w-sm w-full text-center animate-in zoom-in duration-200">
+                  <h3 className="text-xl font-bold text-white mb-4">對手請求恢復</h3>
+                  <div className="flex gap-3 justify-center">
+                    <button onClick={() => handleRespondResume(false)} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-white transition-colors">拒絕</button>
+                    <button onClick={() => handleRespondResume(true)} className="px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-white transition-colors">同意恢復</button>
+                  </div>
+                </div>
+             ) : (
+                <div className="text-yellow-400 animate-pulse font-bold text-xl">等待對手同意恢復...</div>
+             )
+          ) : (
+            <button 
+              onClick={handleRequestResume}
+              className="px-8 py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold shadow-lg transition-transform active:scale-95"
+            >
+              請求恢復遊戲
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

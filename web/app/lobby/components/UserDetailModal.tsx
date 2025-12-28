@@ -1,6 +1,6 @@
-import React from 'react';
-import { getRankInfo, formatLastOnline } from '../../../lib/utils';
-import RankIcon from '../../components/RankIcons';
+import React, { useState, useEffect } from "react";
+import { getRankInfo, formatLastOnline } from "../../../lib/utils";
+import RankIcon from "../../components/RankIcons";
 
 interface UserDetailModalProps {
   showUserDetail: boolean;
@@ -19,6 +19,24 @@ export default function UserDetailModal({
   removeFriend,
   onChallenge
 }: UserDetailModalProps) {
+  const [viewMode, setViewMode] = useState<"turn-based" | "rts">("turn-based");
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowUserDetail(false);
+      }
+    };
+
+    if (showUserDetail) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showUserDetail, setShowUserDetail]);
+
   if (!showUserDetail || !selectedUser) return null;
 
   const renderStats = (title: string, played: number, won: number, colorClass: string) => {
@@ -50,9 +68,41 @@ export default function UserDetailModal({
     );
   };
 
+  // Helper to get stats based on current view mode
+  const getStats = () => {
+    if (viewMode === "rts") {
+      return {
+        rating: selectedUser.rts_rating,
+        rankedPlayed: selectedUser.rts_ranked_games_played || 0,
+        rankedWon: selectedUser.rts_ranked_games_won || 0,
+        casualPlayed: selectedUser.rts_casual_games_played || 0,
+        casualWon: selectedUser.rts_casual_games_won || 0,
+        customPlayed: selectedUser.rts_custom_games_played || 0,
+        customWon: selectedUser.rts_custom_games_won || 0,
+      };
+    }
+    return {
+      rating: selectedUser.rating,
+      rankedPlayed: selectedUser.ranked_games_played || 0,
+      rankedWon: selectedUser.ranked_games_won || 0,
+      casualPlayed: selectedUser.casual_games_played || 0,
+      casualWon: selectedUser.casual_games_won || 0,
+      customPlayed: selectedUser.custom_games_played || 0,
+      customWon: selectedUser.custom_games_won || 0,
+    };
+  };
+
+  const stats = getStats();
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="bg-[#1e293b] p-6 rounded-2xl w-full max-w-lg border border-slate-700 shadow-2xl max-h-[90vh] overflow-y-auto">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      onClick={() => setShowUserDetail(false)}
+    >
+      <div 
+        className="bg-[#1e293b] p-6 rounded-2xl w-full max-w-lg border border-slate-700 shadow-2xl max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-xl font-bold text-white">玩家資料</h3>
           <button
@@ -84,10 +134,10 @@ export default function UserDetailModal({
             <p className="text-slate-300 text-sm mt-3 text-center italic">{selectedUser.bio}</p>
           )}
 
-          {/* Rank Icon */}
-          {selectedUser.rating && (
+          {/* Rank Icon (Based on current view mode rating) */}
+          {stats.rating && (
             <div className="mt-4">
-              <RankIcon rating={selectedUser.rating} size={64} />
+              <RankIcon rating={stats.rating} size={64} />
             </div>
           )}
 
@@ -112,10 +162,8 @@ export default function UserDetailModal({
               removeFriend && (
                 <button
                   onClick={() => {
-                    if (confirm('確定要刪除這位好友嗎？')) {
-                      removeFriend(selectedUser.id);
-                      setShowUserDetail(false);
-                    }
+                     removeFriend(selectedUser.id);
+                     setShowUserDetail(false);
                   }}
                   className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg font-medium transition-colors"
                 >
@@ -125,24 +173,48 @@ export default function UserDetailModal({
             )}
           </div>
         </div>
+
+        {/* Mode Tabs */}
+        <div className="flex p-1 bg-slate-900/50 rounded-xl mb-6">
+          <button
+            onClick={() => setViewMode("turn-based")}
+            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${
+              viewMode === "turn-based"
+                ? "bg-indigo-600 text-white shadow-lg"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            回合制
+          </button>
+          <button
+            onClick={() => setViewMode("rts")}
+            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${
+              viewMode === "rts"
+                ? "bg-pink-600 text-white shadow-lg"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            即時制 (RTS)
+          </button>
+        </div>
         
         {/* 統計資訊 */}
         <div className="space-y-4 mb-6">
           {/* 積分對戰 */}
           <div className="bg-slate-900/50 p-4 rounded-xl">
             <h4 className="text-xs font-bold text-amber-400 mb-3 uppercase tracking-wider">積分對戰</h4>
-            {selectedUser.ranked_games_played < 10 ? (
+            {stats.rankedPlayed < 10 ? (
               <div className="bg-slate-800/50 rounded-lg p-3">
                 <p className="text-sm text-amber-400 text-center font-medium">定級中</p>
                 <p className="text-xs text-slate-400 text-center mt-2">完成 10 場定級賽後將顯示段位</p>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                    <div className="flex flex-col items-center">
                     <span className="text-slate-400 text-xs">已完成</span>
-                    <span className="font-bold text-white">{selectedUser.ranked_games_played}/10</span>
+                    <span className="font-bold text-white">{stats.rankedPlayed}/10</span>
                   </div>
                   <div className="flex flex-col items-center">
                     <span className="text-slate-400 text-xs">勝場</span>
-                    <span className="font-bold text-green-400">{selectedUser.ranked_games_won}</span>
+                    <span className="font-bold text-green-400">{stats.rankedWon}</span>
                   </div>
                 </div>
               </div>
@@ -151,33 +223,33 @@ export default function UserDetailModal({
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <span className="text-slate-400 text-xs block">段位</span>
-                    <span className={`font-bold text-lg ${getRankInfo(selectedUser.rating).color}`}>
-                      {getRankInfo(selectedUser.rating).nameZh}
+                    <span className={`font-bold text-lg ${getRankInfo(stats.rating).color}`}>
+                      {getRankInfo(stats.rating).nameZh}
                     </span>
                   </div>
                   <div className="text-right">
                     <span className="text-slate-400 text-xs block">Rating</span>
-                    <span className="font-bold text-lg text-amber-400">{selectedUser.rating}</span>
+                    <span className="font-bold text-lg text-amber-400">{stats.rating}</span>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="flex flex-col">
                     <span className="text-slate-400 text-xs">勝場</span>
-                    <span className="font-bold text-green-400">{selectedUser.ranked_games_won}</span>
+                    <span className="font-bold text-green-400">{stats.rankedWon}</span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-slate-400 text-xs">敗場</span>
-                    <span className="font-bold text-red-400">{selectedUser.ranked_games_played - selectedUser.ranked_games_won}</span>
+                    <span className="font-bold text-red-400">{stats.rankedPlayed - stats.rankedWon}</span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-slate-400 text-xs">總場次</span>
-                    <span className="font-bold text-white">{selectedUser.ranked_games_played}</span>
+                    <span className="font-bold text-white">{stats.rankedPlayed}</span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-slate-400 text-xs">勝率</span>
                     <span className="font-bold text-emerald-400">
-                      {selectedUser.ranked_games_played > 0 
-                        ? Math.round((selectedUser.ranked_games_won / selectedUser.ranked_games_played) * 100) 
+                      {stats.rankedPlayed > 0 
+                        ? Math.round((stats.rankedWon / stats.rankedPlayed) * 100) 
                         : 0}%
                     </span>
                   </div>
@@ -187,26 +259,26 @@ export default function UserDetailModal({
           </div>
 
           {/* 一般對戰 */}
-          {renderStats('一般對戰', selectedUser.casual_games_played || 0, selectedUser.casual_games_won || 0, 'text-blue-400')}
+          {renderStats("一般對戰", stats.casualPlayed, stats.casualWon, "text-blue-400")}
 
           {/* 好友對戰 */}
-          {renderStats('好友對戰', selectedUser.custom_games_played || 0, selectedUser.custom_games_won || 0, 'text-purple-400')}
+          {renderStats("好友對戰", stats.customPlayed, stats.customWon, "text-purple-400")}
         </div>
         
         {/* Rating 分佈圖 - 只有完成定級賽的人才顯示 */}
-        {selectedUser.ranked_games_played >= 10 && (
+        {stats.rankedPlayed >= 10 && stats.rating && (
           <div className="bg-slate-900/50 p-4 rounded-xl mb-6">
             <h4 className="text-sm font-bold text-white mb-3">Rating 分佈</h4>
             <div className="relative pt-6 pb-2">
               {/* 分段標記 (上方) */}
               <div className="absolute top-0 left-0 right-0 flex justify-between text-[10px] text-slate-500">
-                <span style={{left: '0%'}} className="absolute">0</span>
-                <span style={{left: '14%'}} className="absolute">800</span>
-                <span style={{left: '28%'}} className="absolute">1200</span>
-                <span style={{left: '42%'}} className="absolute">1500</span>
-                <span style={{left: '57%'}} className="absolute">1800</span>
-                <span style={{left: '71%'}} className="absolute">2200</span>
-                <span style={{left: '85%'}} className="absolute">2500</span>
+                <span style={{left: "0%"}} className="absolute">0</span>
+                <span style={{left: "14%"}} className="absolute">800</span>
+                <span style={{left: "28%"}} className="absolute">1200</span>
+                <span style={{left: "42%"}} className="absolute">1500</span>
+                <span style={{left: "57%"}} className="absolute">1800</span>
+                <span style={{left: "71%"}} className="absolute">2200</span>
+                <span style={{left: "85%"}} className="absolute">2500</span>
               </div>
             
               {/* 進度條 */}
@@ -218,11 +290,11 @@ export default function UserDetailModal({
                 <div 
                   className="absolute top-0 bottom-0 w-1 bg-white shadow-[0_0_10px_rgba(255,255,255,0.8)] z-10"
                   style={{ 
-                    left: `${Math.min(Math.max((selectedUser.rating) / 3000 * 100, 0), 100)}%`
+                    left: `${Math.min(Math.max((stats.rating) / 3000 * 100, 0), 100)}%`
                   }}
                 >
                   <div className="absolute -top-7 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white text-xs font-bold px-2 py-0.5 rounded border border-slate-600 whitespace-nowrap">
-                    {selectedUser.rating}
+                    {stats.rating}
                   </div>
                 </div>
               </div>

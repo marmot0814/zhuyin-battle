@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { formatLastOnline } from '../../../lib/utils';
 import { api } from '../../../lib/api';
+import ConfirmModal from '../../components/ConfirmModal';
 
 interface ChatWindowProps {
   showChat: boolean;
@@ -18,6 +19,10 @@ export default function ChatWindow({
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // Confirm Modal State
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [messageToRecall, setMessageToRecall] = useState<number | null>(null);
 
   useEffect(() => {
     if (showChat && chatFriend) {
@@ -43,6 +48,12 @@ export default function ChatWindow({
       if (res.ok) {
         const data = await res.json();
         setMessages(data);
+        
+        // Mark unread messages as read
+        const hasUnread = data.some((m: any) => m.sender_id === chatFriend.id && !m.is_read);
+        if (hasUnread) {
+          api(`/api/friends/messages/${chatFriend.id}/read`, { method: 'POST' }).catch(console.error);
+        }
       }
     } catch (error) {
       console.error('Failed to load messages:', error);
@@ -65,6 +76,26 @@ export default function ChatWindow({
     } catch (error) {
       console.error('Failed to send message:', error);
     }
+  }
+
+  async function handleRecallMessage() {
+    if (!messageToRecall) return;
+    try {
+      const res = await api(`/api/friends/messages/${messageToRecall}/recall`, { method: 'POST' });
+      if (res.ok) {
+        loadMessages();
+      }
+    } catch (error) {
+      console.error('Failed to recall message:', error);
+    } finally {
+      setShowConfirm(false);
+      setMessageToRecall(null);
+    }
+  }
+
+  function confirmRecall(messageId: number) {
+    setMessageToRecall(messageId);
+    setShowConfirm(true);
   }
 
   if (!showChat || !chatFriend) return null;
@@ -133,18 +164,40 @@ export default function ChatWindow({
             messages.map((msg) => {
               const isMe = msg.sender_id === user?.id;
               return (
-                <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group items-end gap-2`}>
+                  {isMe && !msg.is_recalled && (
+                     <button 
+                       onClick={(e) => {
+                         e.stopPropagation();
+                         confirmRecall(msg.id);
+                       }}
+                       className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 text-xs mb-6 transition-opacity whitespace-nowrap px-2 py-1"
+                     >
+                       收回
+                     </button>
+                  )}
                   <div className={`max-w-[70%] ${isMe ? 'items-end' : 'items-start'} flex flex-col`}>
-                    <div className={`px-4 py-2 rounded-2xl ${
-                      isMe 
-                        ? 'bg-indigo-600 text-white' 
-                        : 'bg-slate-700 text-slate-200'
-                    }`}>
-                      {msg.content}
+                    {msg.is_recalled ? (
+                       <div className="px-4 py-2 rounded-2xl bg-slate-800 text-slate-500 italic border border-slate-700 text-sm">
+                         訊息已收回
+                       </div>
+                    ) : (
+                      <div className={`px-4 py-2 rounded-2xl ${
+                        isMe 
+                          ? 'bg-indigo-600 text-white' 
+                          : 'bg-slate-700 text-slate-200'
+                      }`}>
+                        {msg.content}
+                      </div>
+                    )}
+                    <div className={`flex items-center gap-2 mt-1 px-1`}>
+                      <span className="text-xs text-slate-500">
+                        {formatMessageTime(msg.created_at)}
+                      </span>
+                      {isMe && msg.is_read && !msg.is_recalled && (
+                        <span className="text-xs text-indigo-400">已讀</span>
+                      )}
                     </div>
-                    <span className="text-xs text-slate-500 mt-1 px-1">
-                      {formatMessageTime(msg.created_at)}
-                    </span>
                   </div>
                 </div>
               );
@@ -174,6 +227,14 @@ export default function ChatWindow({
           </div>
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={showConfirm}
+        title="收回訊息"
+        message="確定要收回這則訊息嗎？"
+        onConfirm={handleRecallMessage}
+        onCancel={() => setShowConfirm(false)}
+      />
     </div>
   );
 }

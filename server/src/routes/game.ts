@@ -1,27 +1,12 @@
 import express from 'express';
 import { gameManager } from '../game/GameManager';
-import jwt from 'jsonwebtoken';
 import pool from '../db';
+import { verifyToken } from './users';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
-
-function authenticateToken(req: any, res: any, next: any) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token' });
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: number };
-    req.userId = decoded.userId;
-    next();
-  } catch (error) {
-    return res.status(403).json({ error: 'Invalid token' });
-  }
-}
 
 // Get Game State
-router.get('/:id', authenticateToken, async (req: any, res: any) => {
+router.get('/:id', verifyToken, async (req: any, res: any) => {
   const battleId = req.params.id;
   const game = gameManager.getGame(battleId);
   
@@ -66,12 +51,77 @@ router.get('/:id', authenticateToken, async (req: any, res: any) => {
     status: game.status,
     winner: game.winner,
     logs: game.logs,
-    isMyTurn: game.turn === req.userId
+    isMyTurn: game.gameMode === 'ranked_rts' || game.turn === req.userId,
+    currentUserId: req.userId,
+    skillCharges: game.skillCharges,
+    skillInventory: game.skillInventory,
+    pauseRequest: game.pauseRequest,
+    resumeRequest: game.resumeRequest
   });
 });
 
+// Surrender
+router.post('/:id/surrender', verifyToken, async (req: any, res: any) => {
+  const battleId = req.params.id;
+  const userId = req.userId;
+  const result = gameManager.surrender(battleId, userId);
+  if (result.error) return res.status(400).json(result);
+  res.json(result);
+});
+
+// Request Timeout
+router.post('/:id/timeout/request', verifyToken, async (req: any, res: any) => {
+  const battleId = req.params.id;
+  const userId = req.userId;
+  const result = gameManager.requestTimeout(battleId, userId);
+  if (result.error) return res.status(400).json(result);
+  res.json(result);
+});
+
+// Respond Timeout
+router.post('/:id/timeout/respond', verifyToken, async (req: any, res: any) => {
+  const battleId = req.params.id;
+  const userId = req.userId;
+  const { accept } = req.body;
+  const result = gameManager.respondTimeout(battleId, userId, accept);
+  if (result.error) return res.status(400).json(result);
+  res.json(result);
+});
+
+// Request Resume
+router.post('/:id/resume/request', verifyToken, async (req: any, res: any) => {
+  const battleId = req.params.id;
+  const userId = req.userId;
+  const result = gameManager.requestResume(battleId, userId);
+  if (result.error) return res.status(400).json(result);
+  res.json(result);
+});
+
+// Respond Resume
+router.post('/:id/resume/respond', verifyToken, async (req: any, res: any) => {
+  const battleId = req.params.id;
+  const userId = req.userId;
+  const { accept } = req.body;
+  const result = gameManager.respondResume(battleId, userId, accept);
+  if (result.error) return res.status(400).json(result);
+  res.json(result);
+});
+
+// Use Skill
+router.post('/:id/skill', verifyToken, async (req: any, res: any) => {
+  const battleId = req.params.id;
+  const userId = req.userId;
+
+  try {
+    const result = gameManager.useSkill(battleId, userId);
+    res.json(result);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // Submit Move
-router.post('/:id/move', authenticateToken, async (req: any, res: any) => {
+router.post('/:id/move', verifyToken, async (req: any, res: any) => {
   const battleId = req.params.id;
   const { sequence } = req.body; // Array of {r, c}
 

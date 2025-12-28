@@ -2,7 +2,7 @@ import React from 'react';
 import { getRankInfo } from '../../lib/utils';
 
 interface RankIconProps {
-  rating: number;
+  rating: number | null;
   size?: number;
   className?: string;
 }
@@ -20,6 +20,13 @@ export default function RankIcon({ rating, size = 48, className = '' }: RankIcon
   };
 
   switch (name) {
+    case 'UNRANKED':
+      return (
+        <svg {...commonProps}>
+          <circle cx="50" cy="50" r="40" fill="#334155" stroke="#1e293b" strokeWidth="4" strokeDasharray="8 4" />
+          <text x="50" y="55" textAnchor="middle" fill="#94a3b8" fontSize="30" fontWeight="bold">?</text>
+        </svg>
+      );
     case 'IRON':
       return (
         <svg {...commonProps}>

@@ -6,6 +6,7 @@ interface NavbarProps {
   setShowFriendRequests: (show: boolean) => void;
   handleLogout: () => void;
   onOpenLeaderboard: () => void;
+  onOpenTutorial: () => void;
 }
 
 export default function Navbar({ 
@@ -13,16 +14,24 @@ export default function Navbar({
   showFriendRequests, 
   setShowFriendRequests, 
   handleLogout,
-  onOpenLeaderboard
+  onOpenLeaderboard,
+  onOpenTutorial
 }: NavbarProps) {
   return (
     <nav className="h-16 border-b border-slate-800 bg-[#1e293b]/80 backdrop-blur-md flex items-center justify-between px-6 flex-shrink-0 z-50">
       <div className="flex items-center gap-2">
         <h1 className="text-2xl font-black text-white tracking-tighter italic">
-          注音 <span className="text-indigo-500">對戰</span>
+          精靈語 <span className="text-indigo-500">對戰</span>
         </h1>
       </div>
       <div className="flex gap-4 items-center">
+        <button
+          onClick={onOpenTutorial}
+          className="px-3 py-2 text-slate-300 hover:text-white transition-colors flex items-center gap-2"
+          title="遊戲教學"
+        >
+          <span className="text-2xl">🎓</span>
+        </button>
         <button
           onClick={onOpenLeaderboard}
           className="px-3 py-2 text-slate-300 hover:text-white transition-colors flex items-center gap-2"

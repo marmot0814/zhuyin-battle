@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS messages (
   sender_id INT NOT NULL,
   receiver_id INT NOT NULL,
   content TEXT NOT NULL,
+  is_read BOOLEAN DEFAULT FALSE,
+  is_recalled BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
@@ -107,6 +109,18 @@ CREATE TABLE IF NOT EXISTS battles (
   FOREIGN KEY (winner_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
+-- Battle Invites table
+CREATE TABLE IF NOT EXISTS battle_invites (
+  id SERIAL PRIMARY KEY,
+  sender_id INT NOT NULL,
+  receiver_id INT NOT NULL,
+  status VARCHAR(20) DEFAULT 'pending', -- pending, accepted, rejected
+  settings JSONB, -- Store game settings (mode, time control, etc.)
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 -- Create indexes for faster queries
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
@@ -124,4 +138,32 @@ CREATE INDEX IF NOT EXISTS idx_messages_receiver_id ON messages(receiver_id);
 CREATE INDEX IF NOT EXISTS idx_battles_player1_id ON battles(player1_id);
 CREATE INDEX IF NOT EXISTS idx_battles_player2_id ON battles(player2_id);
 CREATE INDEX IF NOT EXISTS idx_battles_status ON battles(status);
+
+-- Add missing columns for detailed stats
+ALTER TABLE users ADD COLUMN IF NOT EXISTS ranked_games_played INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS ranked_games_won INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS casual_games_played INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS casual_games_won INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS custom_games_played INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS custom_games_won INT DEFAULT 0;
+
+-- Add RTS stats
+ALTER TABLE users ADD COLUMN IF NOT EXISTS rts_rating INT DEFAULT 1500;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS rts_games_played INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS rts_games_won INT DEFAULT 0;
+
+-- Add RTS detailed stats
+ALTER TABLE users ADD COLUMN IF NOT EXISTS rts_ranked_games_played INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS rts_ranked_games_won INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS rts_casual_games_played INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS rts_casual_games_won INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS rts_custom_games_played INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS rts_custom_games_won INT DEFAULT 0;
+
+-- Add Ban fields
+ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_until TIMESTAMP;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_reason TEXT;
+
+-- Add settings to battle_invites if it exists but missing column
+ALTER TABLE battle_invites ADD COLUMN IF NOT EXISTS settings JSONB;
 

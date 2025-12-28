@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { query } from '../db';
+import { UserModel } from '../models/User';
 
 const router = express.Router();
 
@@ -30,7 +31,12 @@ router.get('/users', verifyAdminPassword, async (req: Request, res: Response) =>
         ranked_games_played, ranked_games_won,
         casual_games_played, casual_games_won,
         custom_games_played, custom_games_won,
+        rts_rating, rts_games_played, rts_games_won,
+        rts_ranked_games_played, rts_ranked_games_won,
+        rts_casual_games_played, rts_casual_games_won,
+        rts_custom_games_played, rts_custom_games_won,
         created_at, last_online, last_ping,
+        banned_until, ban_reason,
         EXTRACT(EPOCH FROM (NOW() - COALESCE(last_ping, last_online))) as seconds_offline
       FROM users 
       ORDER BY created_at DESC
@@ -174,6 +180,67 @@ router.delete('/battles/:id', verifyAdminPassword, async (req: Request, res: Res
   } catch (error) {
     console.error('Error deleting battle:', error);
     res.status(500).json({ error: 'Failed to delete battle' });
+  }
+});
+
+// Delete user
+router.delete('/users/:id', verifyAdminPassword, async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    const success = await UserModel.delete(id);
+    if (success) {
+      res.json({ message: 'User deleted successfully' });
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+// Ban user
+router.post('/users/:id/ban', verifyAdminPassword, async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { duration, unit, reason } = req.body; // duration: number, unit: 'minutes'|'hours'|'days'|'permanent'
+    
+    let until: Date;
+    if (unit === 'permanent') {
+      until = new Date('9999-12-31');
+    } else {
+      until = new Date();
+      if (unit === 'minutes') until.setMinutes(until.getMinutes() + duration);
+      else if (unit === 'hours') until.setHours(until.getHours() + duration);
+      else if (unit === 'days') until.setDate(until.getDate() + duration);
+      else return res.status(400).json({ error: 'Invalid unit' });
+    }
+
+    const user = await UserModel.ban(id, until, reason || 'Banned by admin');
+    if (user) {
+      res.json(user);
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error banning user:', error);
+    res.status(500).json({ error: 'Failed to ban user' });
+  }
+});
+
+// Unban user
+router.post('/users/:id/unban', verifyAdminPassword, async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    const user = await UserModel.unban(id);
+    if (user) {
+      res.json(user);
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error unbanning user:', error);
+    res.status(500).json({ error: 'Failed to unban user' });
   }
 });
 
